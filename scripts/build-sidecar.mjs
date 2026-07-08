@@ -28,6 +28,8 @@ if (!existsSync(outDir)) {
   mkdirSync(outDir, { recursive: true });
 }
 
+let built = 0;
+let failed = 0;
 for (const target of targets) {
   const platform = target.split('-')[1];
   const arch = target.split('-')[2];
@@ -40,10 +42,12 @@ for (const target of targets) {
       `npx pkg agent-proxy.mjs --targets ${target} --output ${join(outDir, outName)} --compress GZip`,
       { stdio: 'inherit' }
     );
+    built++;
   } catch (err) {
     console.error(`Failed to build for ${target}:`, err.message);
+    failed++;
   }
 }
 
-console.log('\n✅ Sidecar binaries built in', outDir);
-console.log('Update tauri.conf.json externalBin to point to the correct ones for your platform.');
+console.log(`\n✅ Sidecar build complete. Success: ${built}, Failed: ${failed} (graceful). Binaries in ${outDir}`);
+console.log('Update tauri.conf.json externalBin to point to the correct ones for your platform (platform variants or base).');
