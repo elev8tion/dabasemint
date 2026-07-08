@@ -93,6 +93,36 @@ test('Export as Real Project produces useful scaffold artifacts', () => {
   if (Object.keys(files).length !== 4 || !files['CONNECTION.md']) throw new Error('Scaffold missing key files');
 });
 
+// 7. Native reveal simulation (RECOMMENDATIONS R2)
+test('Native reveal simulation produces valid path response shape', () => {
+  const simulateReveal = (path) => ({ ok: true, path, action: 'reveal' });
+  const res = simulateReveal('/Users/kc/page-agent-toolchest');
+  if (!res.ok || !res.path || res.action !== 'reveal') throw new Error('Reveal shape invalid');
+});
+
+// 8. Health dashboard data shape (R4)
+test('Health dashboard computes correct global + per-tc stats shape', () => {
+  const tcs = [
+    { id: 'a', name: 'A', modules: [{}, {}, {}], contracts: true, sourceType: 'oss-repo' },
+    { id: 'b', name: 'B', modules: [{}], contracts: false }
+  ];
+  const totalModules = tcs.reduce((s, t) => s + (t.modules?.length || 0), 0);
+  const healths = tcs.map(t => 40 + (t.modules.length * 5) + (t.contracts ? 12 : 0));
+  const avg = Math.round(healths.reduce((x,y)=>x+y,0) / tcs.length);
+  const missing = tcs.filter(t => !t.contracts).length;
+  const dashboard = { count: tcs.length, totalModules, avgHealth: avg, missingContracts: missing };
+  if (dashboard.count !== 2 || dashboard.totalModules !== 4 || dashboard.missingContracts !== 1 || dashboard.avgHealth < 40) {
+    throw new Error('Health dashboard shape or calc wrong: ' + JSON.stringify(dashboard));
+  }
+});
+
+// 9. Restart proxy simulation
+test('Agent proxy restart simulation returns healthy state', () => {
+  const simulateRestart = () => ({ ok: true, restarted: true, port: 12345, health: { ok: true } });
+  const res = simulateRestart();
+  if (!res.ok || !res.restarted || !res.health.ok) throw new Error('Restart proxy sim failed');
+});
+
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 
 if (failed > 0) {

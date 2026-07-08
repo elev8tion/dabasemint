@@ -221,8 +221,10 @@ export async function getAgentProviderStatus(preferredProviderId = null) {
     baseUrl: active?.baseUrl || NOVITA_PROVIDER.baseUrl,
     retry: DEFAULT_GLM_RETRY,
     authSource: active?.authSource || null,
-    providers,
-    active
+    providers,  // full list for multi-provider health display (R3)
+    active,
+    multiProvider: true,  // R3 enhancement: signals better multi-provider status support
+    proxyHealthSupported: true
   };
 }
 

@@ -634,6 +634,7 @@ function renderAll() {
   renderAgentStatus();
   updateMetrics();
   renderCollections();
+  renderHealthDashboard();
 }
 
 function renderCollections() {
@@ -672,6 +673,58 @@ function clearTagFilter() {
   const s = $('search-input');
   if (s) s.value = '';
   renderLibrary();
+}
+
+// R4: Health Dashboard (global stats + per-toolchest cards)
+function renderHealthDashboard() {
+  let container = $('health-dashboard');
+  if (!container) {
+    const lib = $('library-grid');
+    if (lib && lib.parentElement && lib.parentElement.parentElement) {
+      container = document.createElement('div');
+      container.id = 'health-dashboard';
+      container.className = 'health-dashboard';
+      // Insert after the library section
+      const libSection = lib.closest('.section') || lib.parentElement;
+      if (libSection && libSection.parentElement) {
+        libSection.parentElement.insertBefore(container, libSection.nextSibling);
+      } else {
+        lib.parentElement.appendChild(container);
+      }
+    } else return;
+  }
+
+  const tcs = state.toolchests || [];
+  const totalModules = tcs.reduce((sum, tc) => sum + (tc.modules?.length || 0), 0);
+  const healths = tcs.map(tc => computeHealth(tc));
+  const avgHealth = tcs.length ? Math.round(healths.reduce((a, b) => a + b, 0) / tcs.length) : 0;
+  const missingContracts = tcs.filter(tc => !tc.contracts).length;
+
+  let cardsHtml = tcs.map(tc => {
+    const score = computeHealth(tc);
+    const label = getRichnessLabel(score);
+    const issues = [];
+    if (!tc.contracts) issues.push('no contracts');
+    if (!tc.modules || tc.modules.length < 3) issues.push('sparse modules');
+    const issueStr = issues.length ? issues.join(', ') : 'healthy';
+    return `<div class="health-card">
+      <div><strong>${tc.name}</strong> <span class="health-score ${label.color}">${score}</span></div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">${tc.sourceType || ''} • ${tc.modules?.length || 0} mods • ${issueStr}</div>
+    </div>`;
+  }).join('');
+
+  if (!cardsHtml) cardsHtml = '<div class="empty" style="padding:20px 10px;font-size:12px;">Register toolchests to see health dashboard.</div>';
+
+  container.innerHTML = `
+    <div class="section-header"><h2>Registry Health Dashboard</h2><p>Global stats + per-toolchest health</p></div>
+    <div class="health-stats">
+      <div><span class="big">${tcs.length}</span><small>toolchests</small></div>
+      <div><span class="big">${totalModules}</span><small>modules</small></div>
+      <div><span class="big">${avgHealth}</span><small>avg health</small></div>
+      <div><span class="big">${missingContracts}</span><small>missing contracts</small></div>
+    </div>
+    <div class="health-cards">${cardsHtml}</div>
+  `;
 }
 
 function updateMetrics() {
@@ -1093,17 +1146,21 @@ function renderAgentStatus() {
   const portStr = ph.port ? `port:${ph.port}` : 'no-port';
   const h = ph.health || {};
   const healthBadge = h.ok ? '🟢 healthy' : (h.error ? '🔴 ' + h.error : '⚪ unknown');
-  // mini logs from recent history
+  // R3: better multi-provider health summary from enhanced status
+  const provCount = (s.providers && s.providers.length) ? s.providers.filter(p => p.configured).length : (s.configured ? 1 : 0);
+  const mp = s.multiProvider ? ` (${provCount} cfg)` : '';
+  // small logs/status panel: recent agent activity + proxy health
   const recentLogs = (state.agentHistory || []).slice(0, 3).map(h => `${h.id}:${h.result && h.result.ok ? 'ok' : 'err'}`).join(' ');
+  const proxyDetail = h.port ? `p:${h.port}` : '';
   el.innerHTML = `
     <select id="agent-sel">
       <option value="novita">Novita</option>
       <option value="g0dm0d3-glm">G0DM0D3 GLM</option>
     </select>
-    <span>${s.configured ? '✅' : '❌'} ${s.provider || ''}</span>
-    <span class="proxy-health" style="font-size:10px;margin-left:6px;border:1px solid #39f6af33;padding:1px 4px;border-radius:3px;">${portStr} ${healthBadge}</span>
+    <span>${s.configured ? '✅' : '❌'} ${s.provider || ''}${mp}</span>
+    <span class="proxy-health" style="font-size:10px;margin-left:6px;border:1px solid #39f6af33;padding:1px 4px;border-radius:3px;">${portStr} ${healthBadge} ${proxyDetail}</span>
     <button id="restart-proxy-btn" style="font-size:10px;padding:1px 4px;margin-left:4px;">↻ Restart</button>
-    <div class="proxy-logs" style="font-size:9px;opacity:0.7;margin-top:2px;">${recentLogs || 'no recent agent calls'}</div>
+    <div class="proxy-logs" style="font-size:9px;opacity:0.7;margin-top:2px;" title="Recent agent activity + proxy status">${recentLogs || 'no recent'} | ${h.ok ? 'proxy up' : 'proxy ?'}</div>
   `;
   const sel = $('agent-sel');
   if (sel) {
