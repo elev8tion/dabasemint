@@ -17,15 +17,21 @@ const targets = [
   'node20-linux-x64',     // Linux (x64)
 ];
 
-// These produce platform-specific binaries (e.g. agent-proxy-macos-arm64)
-// for Tauri externalBin in production desktop builds. Matches RECOMMENDATIONS.md sidecar goals.
+// Produce platform-specific binaries named for Tauri externalBin:
+//   agent-proxy-macos-arm64, agent-proxy-macos-x64, etc.
+// Run: npm run build:sidecar
+// Binaries land in src-tauri/sidecars/ ready for bundling.
+// tauri.conf.json externalBin should reference the base or platform variant.
 
 const outDir = 'src-tauri/sidecars';
 
 console.log('Building dabasemint agent-proxy sidecar binaries...');
 
+// Always ensure output dir exists (surgical, no side effects)
 if (!existsSync(outDir)) {
   mkdirSync(outDir, { recursive: true });
+} else {
+  // dir already present - ok
 }
 
 let built = 0;

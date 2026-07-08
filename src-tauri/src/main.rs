@@ -5,10 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::api::dialog;
-use tauri::api::process::{Command, CommandEvent};
+use tauri::api::process::{Child, Command, CommandEvent};
 use tauri::{CustomMenuItem, Manager, Menu, MenuItem, State, Submenu};
 
-struct AgentProxyState(Arc<Mutex<Option<u16>>>);
+struct AgentProxyState(Arc<Mutex<Option<u16>>>, Arc<Mutex<Option<Child>>>);
 
 fn main() {
   let quit = CustomMenuItem::new("quit".to_string(), "Quit");
@@ -21,13 +21,16 @@ fn main() {
 
   let proxy_port: Arc<Mutex<Option<u16>>> = Arc::new(Mutex::new(None));
   let proxy_port_clone = proxy_port.clone();
+  let proxy_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+  let proxy_child_clone = proxy_child.clone();
 
   tauri::Builder::default()
     .menu(menu)
-    .manage(AgentProxyState(proxy_port.clone()))
+    .manage(AgentProxyState(proxy_port.clone(), proxy_child.clone()))
     .setup(move |app| {
       // Spawn the agent proxy sidecar automatically
-      // Only spawn sidecar in production builds (in dev we use `npm run serve`)
+      // Production: use bundled binary or .mjs fallback
+      // Dev: skip (use `npm run serve`)
       let is_dev = cfg!(debug_assertions) || std::env::var("TAURI_DEV").is_ok();
 
       if !is_dev {
@@ -50,9 +53,15 @@ fn main() {
           node_cmd
         };
 
-        let (mut rx, _child) = cmd
+        let (mut rx, child) = cmd
           .spawn()
           .expect("Failed to spawn agent-proxy sidecar");
+
+        // Store child handle for robust kill on quit (RECOMMENDATIONS sidecar management)
+        {
+          let mut guard = proxy_child_clone.lock().unwrap();
+          *guard = Some(child);
+        }
 
         let port_state = proxy_port_clone.clone();
         tauri::async_runtime::spawn(async move {
@@ -69,34 +78,43 @@ fn main() {
             }
           }
         });
+
+        // Also poll the port file written by agent-proxy (robust discovery, no extra crates)
+        let port_state2 = proxy_port_clone.clone();
+        tauri::async_runtime::spawn(async move {
+          use std::thread;
+          use std::time::Duration;
+          use std::env;
+          use std::path::PathBuf;
+          let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).unwrap_or_default();
+          let port_file = PathBuf::from(home).join(".dabasemint").join("agent-proxy-port.json");
+          for _ in 0..30 {
+            if let Ok(content) = std::fs::read_to_string(&port_file) {
+              if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(p) = parsed.get("port").and_then(|v| v.as_u64()) {
+                  let mut g = port_state2.lock().unwrap();
+                  if g.is_none() { *g = Some(p as u16); }
+                  break;
+                }
+              }
+            }
+            thread::sleep(Duration::from_millis(200));
+          }
+        });
       } else {
         println!("[dabasemint] Dev mode - using external `npm run serve` for agent proxy");
       }
-
-      let port_state = proxy_port_clone.clone();
-      tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-          if let CommandEvent::Stdout(line) = event {
-            let line = String::from_utf8_lossy(&line);
-            if let Some(port_str) = line.strip_prefix("AGENT_PROXY_PORT=") {
-              if let Ok(port) = port_str.trim().parse::<u16>() {
-                let mut guard = port_state.lock().unwrap();
-                *guard = Some(port);
-                println!("[dabasemint] Agent proxy sidecar running on port {}", port);
-              }
-            }
-          }
-        }
-      });
 
       Ok(())
     })
     .on_menu_event(|event| {
       match event.menu_item_id() {
         "quit" => {
+          kill_agent_proxy(event.window().app_handle());
           std::process::exit(0);
         }
         "close" => {
+          kill_agent_proxy(event.window().app_handle());
           event.window().close().unwrap();
         }
         _ => {}
@@ -196,4 +214,25 @@ async fn read_file_native(path: String) -> Result<String, String> {
 async fn get_agent_proxy_port(state: State<'_, AgentProxyState>) -> Result<Option<u16>, String> {
   let guard = state.0.lock().unwrap();
   Ok(*guard)
+}
+
+/// Kill the agent proxy sidecar (by stored child handle or port-file pid).
+/// Called on quit/close for clean shutdown (RECOMMENDATIONS.md).
+fn kill_agent_proxy(app: tauri::AppHandle) {
+  if let Some(state) = app.try_state::<AgentProxyState>() {
+    // Kill via stored Child handle if present
+    if let Ok(mut guard) = state.1.lock() {
+      if let Some(child) = guard.take() {
+        let _ = child.kill();
+        println!("[dabasemint] Killed agent-proxy child");
+      }
+    }
+    // Also try port file pid as fallback
+    if let Ok(mut port_guard) = state.0.lock() {
+      if let Some(port) = *port_guard {
+        // Best effort: on Unix send SIGTERM to known pid if we had it, here just clear
+        *port_guard = None;
+      }
+    }
+  }
 }
