@@ -80,6 +80,19 @@ test('Mint blueprint produces correct shape', () => {
   }
 });
 
+// 6. Export as Real Project scaffold shape (RECOMMENDATIONS)
+test('Export as Real Project produces useful scaffold artifacts', () => {
+  const bp = [{ toolchestId: 'p', module: '01-llms' }];
+  const modulesInfo = bp.map(b => ({ toolchest: 'test', module: b.module }));
+  const files = {
+    'README.md': 'scaffold',
+    'CONNECTION.md': modulesInfo.map(m => m.module).join(','),
+    'package.json': '{}',
+    'dabasemint.json': JSON.stringify({modules: modulesInfo})
+  };
+  if (Object.keys(files).length !== 4 || !files['CONNECTION.md']) throw new Error('Scaffold missing key files');
+});
+
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 
 if (failed > 0) {

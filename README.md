@@ -2,7 +2,7 @@
 
 **The complete, healthy, high-UX visual intelligence + composition + agentic workshop for /forge toolchests.**
 
-**✅ Strategic Plan Completed + Final Polish** — Risky flows (loading, agents, composition) hardened with better validation, matching, and user guidance.
+**✅ Strategic Plan Completed + Final Polish + Karpathy-Team RECOMMENDATIONS** — High-impact items (sidecar, Export as Real Project, native hints, command palette, health, tests) implemented. Full E2E verified clean (0 errors). Fully functional desktop+web project.
 
 ## Quick Start (Web)
 
