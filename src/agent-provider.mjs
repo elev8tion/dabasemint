@@ -498,3 +498,20 @@ export async function runAgentTouchpoint(id, context = {}, options = {}, fetchIm
     retries: completion.retries
   };
 }
+
+// Minor enhancement for R3: simple health ping helper (used by UI for proxy health)
+export async function checkProxyHealth(baseUrl = '') {
+  try {
+    let url = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/agent/health` : '/api/agent/health';
+    if (!baseUrl && !url.startsWith('http')) {
+      // node context fallback for testing (browser uses relative ok)
+      url = 'http://127.0.0.1:0/api/agent/health'; // will fail but prevents parse error; real use via base
+    }
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return { ok: true, ...data, checkedAt: Date.now() };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e), checkedAt: Date.now() };
+  }
+}

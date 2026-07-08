@@ -29,6 +29,9 @@ let state = {
   filterType: 'all'
 };
 
+// R3: proxy health state (declared early for use in fetchAgentStatus)
+let lastProxyHealth = null;
+
 // ==================== REFERENCE DATA (real + enhanced) ====================
 const REFERENCE_TOOLCHESTS = [
   {
@@ -228,6 +231,50 @@ async function fetchAgentStatus() {
   } catch {
     state.agentProviderStatus = { configured: false, provider: state.agentProviderChoice, model: 'nvidia/nemotron-3-nano-30b-a3b' };
   }
+  await fetchProxyHealthAndPort();
+  renderAgentStatus();
+}
+
+// R3: proxy health + port discovery (surgical addition for agent proxy UI)
+async function fetchProxyHealthAndPort() {
+  let port = null;
+  let health = { ok: false };
+  const isTauri = !!window.__TAURI__;
+  if (isTauri && window.__TAURI__.invoke) {
+    try {
+      const p = await window.__TAURI__.invoke('get_agent_proxy_port');
+      if (p) port = p;
+    } catch {}
+    if (!port && window.__TAURI__.fs) {
+      try {
+        const { readTextFile, BaseDirectory } = window.__TAURI__.fs;
+        const data = await readTextFile('.dabasemint/agent-proxy-port.json', { dir: BaseDirectory.Home });
+        const parsed = JSON.parse(data);
+        if (parsed && parsed.port) port = parsed.port;
+      } catch {}
+    }
+  }
+  const base = port ? `http://127.0.0.1:${port}` : '';
+  try {
+    const url = base ? `${base}/api/agent/health` : '/api/agent/health';
+    const r = await fetch(url, { method: 'GET' });
+    if (r.ok) {
+      health = await r.json();
+      if (health.port) port = health.port;
+    }
+  } catch (e) {
+    health = { ok: false, error: 'unreachable' };
+  }
+  lastProxyHealth = { port, health, lastChecked: Date.now() };
+  return lastProxyHealth;
+}
+
+async function restartAgentProxy() {
+  const el = $('agent-status');
+  if (el) el.innerHTML = `<span style="color:#ffcc00">Restarting / rechecking proxy...</span>`;
+  await fetchProxyHealthAndPort();
+  await fetchAgentStatus();
+  toast('Proxy health re-fetched. (To fully restart sidecar: restart tauri/serve process)');
   renderAgentStatus();
 }
 
@@ -1042,12 +1089,21 @@ function renderAgentStatus() {
   const el = $('agent-status');
   if (!el) return;
   const s = state.agentProviderStatus || {};
+  const ph = lastProxyHealth || {};
+  const portStr = ph.port ? `port:${ph.port}` : 'no-port';
+  const h = ph.health || {};
+  const healthBadge = h.ok ? '🟢 healthy' : (h.error ? '🔴 ' + h.error : '⚪ unknown');
+  // mini logs from recent history
+  const recentLogs = (state.agentHistory || []).slice(0, 3).map(h => `${h.id}:${h.result && h.result.ok ? 'ok' : 'err'}`).join(' ');
   el.innerHTML = `
     <select id="agent-sel">
       <option value="novita">Novita</option>
       <option value="g0dm0d3-glm">G0DM0D3 GLM</option>
     </select>
     <span>${s.configured ? '✅' : '❌'} ${s.provider || ''}</span>
+    <span class="proxy-health" style="font-size:10px;margin-left:6px;border:1px solid #39f6af33;padding:1px 4px;border-radius:3px;">${portStr} ${healthBadge}</span>
+    <button id="restart-proxy-btn" style="font-size:10px;padding:1px 4px;margin-left:4px;">↻ Restart</button>
+    <div class="proxy-logs" style="font-size:9px;opacity:0.7;margin-top:2px;">${recentLogs || 'no recent agent calls'}</div>
   `;
   const sel = $('agent-sel');
   if (sel) {
@@ -1057,6 +1113,10 @@ function renderAgentStatus() {
       localStorage.setItem('dabasemint:agent-provider', state.agentProviderChoice);
       fetchAgentStatus();
     };
+  }
+  const restartBtn = $('restart-proxy-btn');
+  if (restartBtn) {
+    restartBtn.onclick = (e) => { e.preventDefault(); restartAgentProxy(); };
   }
 }
 
