@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+.turbo/
+
+# Local data & user content
+.toolchests/
+*.db
+dabasemint-registry.json
+snapshots/
+
+# Agent keys (real keys only — example is committed)
+config/agent.local.json
+!config/agent.local.json.example
+
+# IDE & OS
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Env
+.env
+.env.local
+
+# Misc
+*.tmp
+*.bak

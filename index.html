@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dabasemint — Toolchest Visual Masterpiece + Agentic Layer</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div class="orb orb-a"></div>
+  <div class="orb orb-b"></div>
+  <div class="noise"></div>
+
+  <main class="shell">
+    <header class="hero panel glow-border">
+      <nav class="topbar">
+        <div class="brand-mark">
+          <span class="brand-pulse"></span>
+          <strong>dabasemint</strong>
+          <span class="version">enhanced</span>
+        </div>
+        <div class="nav-actions">
+          <div id="agent-status" class="agent-bar"></div>
+          <div id="tauri-status" class="tauri-indicator" style="display:none; font-size:11px; background:#39f6af22; color:#39f6af; padding:2px 8px; border-radius:4px; margin-right:8px;">Native (Tauri)</div>
+          <button class="ghost-btn" id="addToolchestBtn">+ Register</button>
+          <button class="secondary-btn" id="loadReferencesBtn">Load References</button>
+          <button class="ghost-btn" id="load-pageagenttoolchest" title="Quick load page-agent-toolchest">PA</button>
+          <button class="ghost-btn" id="load-captionssitetoolchest" title="Quick load captions-site-toolchest">CS</button>
+          <button class="ghost-btn" id="load-glazetoolchest" title="Quick load Glaze-toolchest">GZ</button>
+          <button class="ghost-btn" onclick="exportRegistry()">Export Registry</button>
+          <button class="ghost-btn" onclick="importRegistry()">Import Registry</button>
+          <button class="ghost-btn" onclick="compareLastTwo()">Compare</button>
+            <button class="ghost-btn" onclick="runTradeRoutes()">Trade Routes</button>
+          <button class="ghost-btn" onclick="showHelp()">Help</button>
+          <button class="ghost-btn" id="clearAllBtn">Reset</button>
+        </div>
+      </nav>
+
+      <section class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Premium Toolchest Workshop — Plan Complete ✅ + Tauri</p>
+          <h1>Visualize.<br>Compose.<br>Agent-Assay.</h1>
+          <p class="hero-subcopy">Local-first, high-fidelity interface for every /forge toolchest. Manual control + powerful agent augmentation.</p>
+          <div class="hero-cta-row">
+            <button class="primary-btn" onclick="document.getElementById('library-grid').scrollIntoView({behavior:'smooth'})">Library</button>
+            <button class="secondary-btn" onclick="document.getElementById('composition-canvas').scrollIntoView({behavior:'smooth'})">Composition</button>
+          </div>
+        </div>
+        <div class="scanner-console">
+          <div class="console-topline"><span class="dot live"></span> <span>Ready</span></div>
+          <div class="console-metrics">
+            <div><span id="metricToolchests">0</span><small>toolchests</small></div>
+            <div><span id="metricModules">0</span><small>modules</small></div>
+            <div><span id="metricBlueprints">0</span><small>blueprint</small></div>
+          </div>
+          <pre>Search • Filter • Assay • Compose • Export</pre>
+        </div>
+      </section>
+    </header>
+
+    <!-- LIBRARY -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Toolchest Library</h2>
+        <p>Health scores • Search • Source filters • One-click Assay & Composition</p>
+      </div>
+      <div class="lib-controls">
+      <input id="search-input" placeholder="Search modules or toolchest names..." />
+      <select id="filter-type">
+        <option value="all">All Sources</option>
+        <option value="oss-repo">OSS Repo</option>
+        <option value="production-web">Production Web</option>
+        <option value="native-binary">Native Binary</option>
+      </select>
+    </div>
+    <div id="library-grid" class="library-grid"></div>
+    </section>
+
+    <!-- ANATOMY + AGENT -->
+    <section class="section two-col">
+      <div>
+        <h2>Anatomy</h2>
+        <div id="anatomy-panel" class="panel anatomy-panel">
+          <div class="empty">Select a toolchest to explore modules, run agents, and view details.</div>
+        </div>
+      </div>
+      <div>
+        <h2>Agent Results & History</h2>
+        <div class="panel">
+          <div id="global-agent-results" class="agent-results-area"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMPOSITION -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Composition Canvas</h2>
+        <p>Build blueprints across toolchests. Run the live Composition Advisor.</p>
+      </div>
+      <div id="composition-canvas" class="composition-canvas panel"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <h2>Trade Routes (Cross-Toolchest Intelligence)</h2>
+        <p>Discover powerful combinations across your entire collection.</p>
+      </div>
+      <div id="trade-routes" class="panel" style="padding:20px;min-height:120px">
+        <button class="primary-btn" onclick="runTradeRoutes()">Analyze Trade Routes</button>
+        <div id="trade-routes-results"></div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div><strong>dabasemint</strong> — Strategic Plan Complete + Tauri Wrapper</div>
+      <div><a href="STRATEGIC-PLAN.md" target="_blank">Plan</a> • Local only • <span onclick="window.dabasemint?.exportBlueprint?.()">Export current blueprint</span></div>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

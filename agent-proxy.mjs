@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+/**
+ * dabasemint Agent Proxy Sidecar
+ * 
+ * Standalone HTTP server that only handles agent API routes.
+ * Used as a Tauri sidecar so the agent proxy runs automatically
+ * inside the desktop app without needing a separate `npm run serve`.
+ */
+
+import http from 'node:http';
+import { getAgentProviderStatus, runAgentTouchpoint } from './src/agent-provider.mjs';
+
+const PORT = process.env.AGENT_PROXY_PORT || 0; // 0 = random available port
+
+const server = http.createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+
+  if (req.method === 'GET' && url.pathname === '/api/agent/status') {
+    try {
+      const preferred = url.searchParams.get('provider') || undefined;
+      const status = await getAgentProviderStatus(preferred);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent/touchpoint') {
+    try {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+
+      const result = await runAgentTouchpoint(
+        body.id,
+        body.context || {},
+        {
+          provider: body.provider,
+          preferredProvider: body.preferredProvider,
+          model: body.model,
+          thinkingLevel: body.thinkingLevel
+        }
+      );
+
+      res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  const addr = server.address();
+  console.log(`[dabasemint-agent-proxy] Listening on http://127.0.0.1:${addr.port}`);
+  // Print the port so the parent process (Tauri) can read it
+  if (process.send) {
+    process.send({ type: 'port', port: addr.port });
+  } else {
+    // Fallback: print to stdout for parent to parse
+    console.log(`AGENT_PROXY_PORT=${addr.port}`);
+  }
+
+  // Also write to a well-known file for easy discovery by frontend
+  try {
+    const { writeFileSync } = await import('fs');
+    const { homedir } = await import('os');
+    const { join } = await import('path');
+    const portFile = join(homedir(), '.dabasemint', 'agent-proxy-port.json');
+    writeFileSync(portFile, JSON.stringify({ port: addr.port, pid: process.pid }));
+  } catch {}
+});
+
+process.on('SIGTERM', () => {
+  server.close(() => process.exit(0));
+});

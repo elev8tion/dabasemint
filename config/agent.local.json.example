@@ -1,0 +1,11 @@
+{
+  "defaultProvider": "novita",
+  "providers": {
+    "novita": {
+      "apiKey": "YOUR_NOVITA_API_KEY_HERE"
+    },
+    "g0dm0d3-glm": {
+      "apiKey": ""
+    }
+  }
+}

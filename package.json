@@ -1,0 +1,44 @@
+{
+  "name": "dabasemint",
+  "version": "0.1.0",
+  "description": "Visual intelligence and composition layer for forge toolchests. Local-first, dark-neon masterpiece.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "dabasemint": "./bin/dabasemint.mjs"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node scripts/serve.mjs",
+    "serve": "node scripts/serve.mjs",
+    "cli": "node bin/dabasemint.mjs",
+    "register": "node bin/dabasemint.mjs register",
+    "list": "node bin/dabasemint.mjs list",
+    "agent:status": "node -e 'import(\"./src/agent-provider.mjs\").then(m => m.getAgentProviderStatus().then(console.log))'",
+    "verify": "node scripts/verify.mjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "npm run tauri:icons && npm run build:sidecar && tauri build",
+    "tauri:icons": "tauri icon src-tauri/icons/icon.svg",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "test": "echo \"No tests yet – see STRATEGIC-PLAN.md\""
+  },
+  "keywords": [
+    "toolchest",
+    "forge",
+    "visualization",
+    "local-first",
+    "composition",
+    "architecture",
+    "dark-ui",
+    "neon"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "@yao-pkg/pkg": "^6.21.0",
+    "vite": "^5.4.0"
+  }
+}
