@@ -11,11 +11,14 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
 const targets = [
-  'node20-macos-arm64',   // Apple Silicon
-  'node20-macos-x64',     // Intel Mac
-  'node20-win-x64',       // Windows
-  'node20-linux-x64',     // Linux
+  'node20-macos-arm64',   // Apple Silicon (macOS arm64)
+  'node20-macos-x64',     // Intel Mac (macOS x64)
+  'node20-win-x64',       // Windows (x64)
+  'node20-linux-x64',     // Linux (x64)
 ];
+
+// These produce platform-specific binaries (e.g. agent-proxy-macos-arm64)
+// for Tauri externalBin in production desktop builds. Matches RECOMMENDATIONS.md sidecar goals.
 
 const outDir = 'src-tauri/sidecars';
 
