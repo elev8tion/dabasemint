@@ -37,6 +37,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/agent/health') {
+    const addr = server.address();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, port: addr ? addr.port : null, uptime: process.uptime(), pid: process.pid }));
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/agent/touchpoint') {
     try {
       const chunks = [];
@@ -78,14 +85,16 @@ server.listen(PORT, '127.0.0.1', () => {
     console.log(`AGENT_PROXY_PORT=${addr.port}`);
   }
 
-  // Also write to a well-known file for easy discovery by frontend
+  // Write port file for reliable discovery (RECOMMENDATIONS.md)
   try {
-    const { writeFileSync } = await import('fs');
-    const { homedir } = await import('os');
-    const { join } = await import('path');
-    const portFile = join(homedir(), '.dabasemint', 'agent-proxy-port.json');
-    writeFileSync(portFile, JSON.stringify({ port: addr.port, pid: process.pid }));
-  } catch {}
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const dir = path.join(os.homedir(), '.dabasemint');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const portFile = path.join(dir, 'agent-proxy-port.json');
+    fs.writeFileSync(portFile, JSON.stringify({ port: addr.port, pid: process.pid, started: Date.now() }));
+  } catch (e) { console.error('port file write failed', e); }
 });
 
 process.on('SIGTERM', () => {
