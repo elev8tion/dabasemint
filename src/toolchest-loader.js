@@ -13,7 +13,7 @@
  */
 
 export async function registerToolchestFromDisk(preferredName = null) {
-  // Prefer native Tauri dialog + FS when running in Tauri
+  // STRONGLY PREFER native Tauri invoke for all FS (RECOMMENDATIONS: native-first)
   if (window.__TAURI__ && window.__TAURI__.invoke) {
     try {
       const selectedPath = await window.__TAURI__.invoke('pick_folder_native');
@@ -50,6 +50,8 @@ export async function registerToolchestFromDisk(preferredName = null) {
       console.warn('Tauri native load failed, falling back to browser API', err);
     }
   }
+
+  // Browser FS only as last resort when NOT in Tauri (strongly prefer native)
 
   if (!window.showDirectoryPicker) {
     alert("Your browser doesn't fully support the File System Access API (needed for real folder loading).\nUse Chrome, Edge, or Arc for the best experience. Manual registration is still available as fallback.");
@@ -222,7 +224,7 @@ function parseForgeState(content) {
 }
 
 export async function refreshToolchestFromDisk(toolchest) {
-  // Tauri native refresh (preferred when available)
+  // STRONGLY prefer native Tauri invoke for refresh (native-first)
   if (window.__TAURI__ && window.__TAURI__.invoke && toolchest._nativePath) {
     try {
       const nativeData = await window.__TAURI__.invoke('read_toolchest_native', { path: toolchest._nativePath });

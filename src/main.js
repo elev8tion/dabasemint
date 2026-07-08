@@ -682,6 +682,7 @@ function renderLibrary() {
           <button class="small-btn" data-action="snapshot">Snapshot</button>
           <button class="small-btn" data-action="refresh">↻</button>
           <button class="small-btn danger" data-action="remove">×</button>
+          ${ (window.__TAURI__ && window.__TAURI__.invoke) ? `<button class="small-btn" data-action="reveal">Reveal</button>` : '' }
         </div>
         <div class="card-footer">
           <button class="ghost-btn tiny" data-action="add-all">+ All to Blueprint</button>
@@ -710,6 +711,7 @@ function renderLibrary() {
       if (action === 'refresh') refreshToolchest(id);
       if (action === 'remove') removeToolchest(id);
       if (action === 'add-all') addAllModulesToBlueprint(id);
+      if (action === 'reveal') revealToolchest(id);
     });
   });
 }
@@ -723,6 +725,26 @@ function addAllModulesToBlueprint(id) {
   const tc = state.toolchests.find(t => t.id === id);
   if (!tc) return;
   tc.modules.forEach(m => addModuleToBlueprint(id, m.name));
+}
+
+// Reveal in Finder (Tauri native only)
+async function revealToolchest(id) {
+  const tc = state.toolchests.find(t => t.id === id);
+  if (!tc || !(window.__TAURI__ && window.__TAURI__.invoke)) return;
+  const p = tc._nativePath || tc.path || '';
+  try {
+    await window.__TAURI__.invoke('reveal_in_finder', { path: p });
+  } catch (e) { console.warn('reveal failed', e); }
+}
+
+// App data metadata persistence stubs (Tauri app dir for toolchests)
+async function saveToolchestsToAppData() {
+  if (!(window.__TAURI__ && window.__TAURI__.invoke)) return;
+  try { await window.__TAURI__.invoke('save_toolchest_metadata', { data: state.toolchests }); } catch {}
+}
+async function loadToolchestsFromAppData() {
+  if (!(window.__TAURI__ && window.__TAURI__.invoke)) return null;
+  try { return await window.__TAURI__.invoke('load_toolchest_metadata'); } catch { return null; }
 }
 
 // ==================== ANATOMY ====================

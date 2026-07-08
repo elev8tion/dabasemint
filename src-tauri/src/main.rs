@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::api::dialog;
 use tauri::api::process::{Child, Command, CommandEvent};
+use tauri::api::shell;
 use tauri::{CustomMenuItem, Manager, Menu, MenuItem, State, Submenu};
 
 struct AgentProxyState(Arc<Mutex<Option<u16>>>, Arc<Mutex<Option<Child>>>);
@@ -124,7 +125,10 @@ fn main() {
       pick_folder_native,
       read_toolchest_native,
       read_file_native,
-      get_agent_proxy_port
+      get_agent_proxy_port,
+      reveal_in_finder,
+      save_toolchest_metadata,
+      load_toolchest_metadata
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
@@ -214,6 +218,44 @@ async fn read_file_native(path: String) -> Result<String, String> {
 async fn get_agent_proxy_port(state: State<'_, AgentProxyState>) -> Result<Option<u16>, String> {
   let guard = state.0.lock().unwrap();
   Ok(*guard)
+}
+
+/// Reveal folder in OS file manager (Finder/Explorer).
+#[tauri::command]
+async fn reveal_in_finder(app: tauri::AppHandle, path: String) -> Result<(), String> {
+  let p = std::path::PathBuf::from(&path);
+  if !p.exists() {
+    return Err("Path does not exist".to_string());
+  }
+  // Use shell open to reveal (opens folder)
+  shell::open(&app, &path, None).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Helpers for Tauri's app data dir metadata (RECOMMENDATIONS: store toolchest paths/metadata reliably)
+fn get_app_metadata_path(app: &tauri::AppHandle, name: &str) -> Result<std::path::PathBuf, String> {
+  let dir = app.path_resolver().app_data_dir().ok_or("no app data dir")?;
+  let _ = std::fs::create_dir_all(&dir);
+  Ok(dir.join(name))
+}
+
+#[tauri::command]
+async fn save_toolchest_metadata(app: tauri::AppHandle, data: serde_json::Value) -> Result<(), String> {
+  let path = get_app_metadata_path(&app, "toolchests.json")?;
+  let content = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+  std::fs::write(&path, content).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+async fn load_toolchest_metadata(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+  let path = get_app_metadata_path(&app, "toolchests.json")?;
+  if path.exists() {
+    let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(serde_json::from_str(&s).unwrap_or(serde_json::json!([])))
+  } else {
+    Ok(serde_json::json!([]))
+  }
 }
 
 /// Kill the agent proxy sidecar (by stored child handle or port-file pid).
