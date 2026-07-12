@@ -38,6 +38,12 @@ async function start() {
         return;
       }
 
+      if (req.method === 'GET' && url.pathname === '/api/agent/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, mode: 'serve', uptime: process.uptime(), pid: process.pid }));
+        return;
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/agent/status') {
         try {
           const preferred = url.searchParams.get('provider') || undefined;

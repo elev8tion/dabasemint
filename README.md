@@ -1,70 +1,70 @@
-# dabasemint (Enhanced)
+# dabasemint
 
 **The complete, healthy, high-UX visual intelligence + composition + agentic workshop for /forge toolchests.**
 
-**✅ Strategic Plan Completed + Final Polish + Karpathy-Team RECOMMENDATIONS** — High-impact items (sidecar, Export as Real Project, native hints, command palette, health, tests) implemented. Full E2E verified clean (0 errors). Fully functional desktop+web project.
+A local-first, dark-neon web app (Vite + vanilla JS) with an optional Tauri desktop wrapper, plus a terminal CLI. The agent layer calls **Novita** and **G0DM0D3 GLM (Zhipu)** LLMs server-side so API keys never reach the browser.
 
-## Quick Start (Web)
+## Quick Start
 
+### Web
 ```bash
 cd /Users/kc/dabasemint
-npm run verify
-npm run serve
+npm install
+npm run verify      # health checks
+npm test            # real-function test suite (16 checks)
+npm run serve       # http://localhost:4174
 ```
 
-Open http://localhost:4174
-
-## Tauri Desktop Wrapper
-
+### CLI
 ```bash
-npm run tauri:dev   # development
-npm run tauri:build  # production build
+node bin/dabasemint.mjs register /path/to/toolchest
+node bin/dabasemint.mjs list
+node bin/dabasemint.mjs assay page-agent-toolchest   # live AI assay from the terminal
+node bin/dabasemint.mjs status
 ```
+The CLI registry lives at `~/.dabasemint/registry.json` and can be imported into the web app via **Import Registry**.
 
-**Improvements in this build**:
-- Native folder picker via Rust (much more reliable than browser File System Access API)
-- Native reading of `.forge-state.md`, modules, and contracts
-- **Agent proxy sidecar** (`agent-proxy.mjs`) — automatically started inside the Tauri app
-- No need to manually run `npm run serve` when using the desktop version
-- Seamless fallback to browser mode when not in Tauri
-- Status indicator shows when running natively
+### Tauri Desktop
+```bash
+npm run tauri:dev    # development (agent routes via `npm run serve`)
+npm run tauri:build  # production bundle
+```
+In production the desktop app spawns `node agent-proxy.mjs` as a managed sidecar (tracked + killed on quit), reads its port from `~/.dabasemint/agent-proxy-port.json`, and the UI talks to it directly. **Requires Node.js on the host.**
 
-This makes the desktop experience much more self-contained and robust.
+## How the UI is wired
 
-**Recommended flow**:
-1. Click + Register → select one of your real toolchests using the picker (supports your page-agent, captions-site, Glaze)
-2. Explore Anatomy — click modules for deep inspector (contracts preview from disk)
-3. Drag modules into Composition Canvas (reorder supported)
-4. Run Trade Routes or Composition Advisor
-5. Mint Blueprint (creates a first-class entry) or Export (JSON + CONNECTION.md)
+`src/main.js` is an ES module, so every handler used by an inline `onclick`/`ondrop` attribute is explicitly exported to `window` / `window.dabasemint` (see the `WINDOW EXPORTS` block). The test suite enforces this so buttons can never silently break again.
 
-The app now gives you real superpowers over your toolchests.
+## Features
 
-## Major Enhancements (current)
-
-- **Real disk loading** — Click "+ Register" and pick a toolchest folder (File System Access API). Deep parsing of modules, contracts.md, READMEs.
-- **Deep Module Inspector** — live contracts.md preview from disk.
-- **Health & Richness scoring** + dynamic Blueprint Health
-- **Search + filters** + agent-applied tags + Collections tag cloud
-- **Interactive Composition Canvas**: drag & drop, reorder, health score, rich export (JSON + CONNECTION.md)
-- **Mint Blueprint** flow — turns your selection into a first-class minted entry
-- **Actionable agents**: Assay, Complements (auto-add), Trade Routes, Context Pack
-- **Agent History**
-- **Live refresh** from stored handles
-- Excellent support for page-agent (contracts), captions-site, Glaze
+- **Real disk loading** — `+ Register` picks a toolchest folder (native Tauri picker or browser File System Access API). Deep parsing of modules, `contracts.md`, READMEs, `.forge-state.md`.
+- **Anatomy view** — module inspector, contracts preview from disk, dependency overview.
+- **Health & Richness scoring** + per-toolchest + global **Health Dashboard**.
+- **Search + source filters** + agent-applied tags + Collections tag cloud.
+- **Composition Canvas** — drag & drop, reorder, blueprint health score, export (JSON + `CONNECTION.md`), and **Export as Real Project** scaffold.
+- **Mint Blueprint** — turns a selection into a first-class library entry.
+- **Agent touchpoints** (8): assay, find-complements, composition-advisor, generate-blueprint-docs, build-context-pack, context-pack-generator, gap-analysis, reusability-audit.
+- **Trade Routes** — cross-toolchest synergy discovery.
+- **Registry Import/Export, Compare, Snapshots, Command Palette (⌘K)**.
 
 ## Agent Layer
 
-Uses Novita + G0DM0D3 GLM via local proxy.
+Keys resolve from (in order): env var → `config/agent.local.json` (copy `config/agent.local.json.example`) → `~/.pi/agent/auth.json` (GLM only). Robust retry/backoff, structured JSON extraction, and per-touchpoint validation. Unconfigured providers are visibly marked in the UI dropdown.
 
-Put keys in `config/agent.local.json`.
+## Project layout
 
-Touchpoints:
-- assay-toolchest
-- composition-advisor
-- find-complements
-- gap-analysis
-- etc.
+```
+src/main.js             # UI: library, anatomy, composition, agents, rendering
+src/toolchest-loader.js # disk ingestion (native + browser FS)
+src/agent-provider.mjs  # provider abstraction, retries, JSON parsing
+src/agent-touchpoints.mjs # 8 structured agent tasks + prompts + validation
+agent-proxy.mjs         # standalone HTTP sidecar (used by Tauri)
+scripts/serve.mjs       # web dev server + agent routes
+scripts/e2e-test.mjs    # npm test
+scripts/verify.mjs      # health checks
+bin/dabasemint.mjs      # terminal CLI
+src-tauri/              # Rust desktop wrapper (sidecar spawn/kill, native FS)
+```
 
 ## Philosophy
 
@@ -72,6 +72,4 @@ Touchpoints:
 - Composition is the goal
 - Agents are powerful accelerators, not required
 - Visual masterpiece first
-- Full curation, versioning, and registry management
-
-**The strategic plan is now complete.** See STRATEGIC-PLAN.md for the full vision and current status.
+- Local-first; keys stay server-side

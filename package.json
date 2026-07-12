@@ -22,7 +22,10 @@
     "tauri:build": "npm run tauri:icons && npm run build:sidecar && tauri build",
     "tauri:icons": "tauri icon src-tauri/icons/icon.svg",
     "build:sidecar": "node scripts/build-sidecar.mjs",
-    "test": "echo \"No tests yet – see STRATEGIC-PLAN.md\""
+    "test": "node scripts/e2e-test.mjs",
+    "test:browser": "python3 scripts/browser-qa.py",
+    "test:browser:extended": "python3 scripts/browser-qa-extended.py",
+    "qa": "npm run verify && npm test && npm run build:sidecar"
   },
   "keywords": [
     "toolchest",
@@ -36,8 +39,8 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/api": "^1.6.0",
+    "@tauri-apps/cli": "^1.5.11",
     "@yao-pkg/pkg": "^6.21.0",
     "vite": "^5.4.0"
   }

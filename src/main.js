@@ -891,14 +891,22 @@ async function revealToolchest(id) {
   } catch (e) { console.warn('reveal failed', e); }
 }
 
-// App data metadata persistence stubs (Tauri app dir for toolchests)
+// App data metadata persistence (now uses safeTauriCall helper — B2 follow-up cleanup)
 async function saveToolchestsToAppData() {
   if (!(window.__TAURI__ && window.__TAURI__.invoke)) return;
-  try { await window.__TAURI__.invoke('save_toolchest_metadata', { data: state.toolchests }); } catch {}
+  await safeTauriCall(
+    () => window.__TAURI__.invoke('save_toolchest_metadata', { data: state.toolchests }),
+    undefined,
+    'save_toolchest_metadata'
+  );
 }
 async function loadToolchestsFromAppData() {
   if (!(window.__TAURI__ && window.__TAURI__.invoke)) return null;
-  try { return await window.__TAURI__.invoke('load_toolchest_metadata'); } catch { return null; }
+  return await safeTauriCall(
+    () => window.__TAURI__.invoke('load_toolchest_metadata'),
+    null,
+    'load_toolchest_metadata'
+  );
 }
 
 // ==================== ANATOMY ====================
@@ -1165,7 +1173,9 @@ function reorderBlueprint(targetIndex, event) {
       saveState();
       renderComposition();
     }
-  } catch {}
+  } catch (e) {
+    console.warn('Drag-and-drop parse failed (bad data?):', e);
+  }
 }
 
 async function runCompositionAdvisor() {
@@ -1580,23 +1590,33 @@ function setupGlobalEvents() {
 }
 
 async function init() {
+  // Global handler for any remaining unhandled promise rejections (addresses low-priority follow-up from heal)
+  window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled promise rejection in dabasemint:', event.reason);
+    if (typeof toast === 'function') {
+      toast('Unexpected error — check console (details logged)', 5000);
+    }
+  });
+
   loadState();
 
   $('addToolchestBtn')?.addEventListener('click', async () => {
     // Tauri native dialog if available (better native FS)
     if (window.__TAURI__ && window.__TAURI__.dialog) {
-      try {
-        const selected = await window.__TAURI__.dialog.open({ directory: true, multiple: false });
-        if (selected) {
-          // In full impl, use Tauri's fs to parse, for now use browser loader + path
-          const loaded = await registerToolchestFromDisk(); // still triggers picker, or enhance
-          if (loaded) {
-            registerToolchest(loaded);
-            toast('Loaded via Tauri native');
-            return;
-          }
+      const selected = await safeTauriCall(
+        () => window.__TAURI__.dialog.open({ directory: true, multiple: false }),
+        null,
+        'Tauri folder picker'
+      );
+      if (selected) {
+        // In full impl, use Tauri's fs to parse, for now use browser loader + path
+        const loaded = await registerToolchestFromDisk();
+        if (loaded) {
+          registerToolchest(loaded);
+          toast('Loaded via Tauri native');
+          return;
         }
-      } catch(e) {}
+      }
     }
     // Try real disk registration first (best UX)
     const loaded = await registerToolchestFromDisk();

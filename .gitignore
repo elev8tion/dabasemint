@@ -6,6 +6,12 @@ dist/
 build/
 .next/
 .turbo/
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
 
 # Local data & user content
 .toolchests/

@@ -1,59 +1,73 @@
 #!/usr/bin/env node
 /**
- * Build script for dabasemint agent proxy sidecar.
- * Uses @yao-pkg/pkg to produce platform-specific binaries for Tauri externalBin.
+ * dabasemint pre-build check for the agent proxy.
  *
- * Run: npm run build:sidecar
+ * The desktop app spawns `node agent-proxy.mjs` as a runtime sidecar
+ * (see src-tauri/src/main.rs). It is NOT a compiled pkg binary anymore —
+ * the .mjs + its src/ imports are bundled as Tauri resources.
+ *
+ * This script verifies those files exist and the proxy can boot before a
+ * `tauri build`, so a broken build is caught early instead of producing a
+ * desktop app with a dead agent layer.
  */
 
-import { execSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync } from 'fs';
+import { spawn } from 'child_process';
 
-const targets = [
-  'node20-macos-arm64',   // Apple Silicon (macOS arm64)
-  'node20-macos-x64',     // Intel Mac (macOS x64)
-  'node20-win-x64',       // Windows (x64)
-  'node20-linux-x64',     // Linux (x64)
+const REQUIRED = [
+  'agent-proxy.mjs',
+  'src/agent-provider.mjs',
+  'src/agent-touchpoints.mjs'
 ];
 
-// Produce platform-specific binaries named for Tauri externalBin:
-//   agent-proxy-macos-arm64, agent-proxy-macos-x64, etc.
-// Run: npm run build:sidecar
-// Binaries land in src-tauri/sidecars/ ready for bundling.
-// tauri.conf.json externalBin should reference the base or platform variant.
+let ok = true;
 
-const outDir = 'src-tauri/sidecars';
-
-console.log('Building dabasemint agent-proxy sidecar binaries...');
-
-// Always ensure output dir exists (surgical, no side effects)
-if (!existsSync(outDir)) {
-  mkdirSync(outDir, { recursive: true });
-} else {
-  // dir already present - ok
+console.log('[build-sidecar] Verifying agent proxy files...');
+for (const f of REQUIRED) {
+  const present = existsSync(f);
+  console.log(`  ${present ? '✅' : '❌'} ${f}`);
+  if (!present) ok = false;
+}
+if (!ok) {
+  console.error('\n❌ Missing required agent proxy files. Aborting build.');
+  process.exit(1);
 }
 
-let built = 0;
-let failed = 0;
-for (const target of targets) {
-  const platform = target.split('-')[1];
-  const arch = target.split('-')[2];
-  const outName = `agent-proxy-${platform}-${arch}`;
+// Boot the proxy on an ephemeral port and confirm it writes its port file + health.
+console.log('\n[build-sidecar] Smoke-testing proxy boot...');
+const child = spawn('node', ['agent-proxy.mjs'], {
+  env: { ...process.env, AGENT_PROXY_PORT: '0' },
+  stdio: ['ignore', 'pipe', 'pipe']
+});
 
-  console.log(`\n→ Building for ${target} → ${outName}`);
+let out = '';
+child.stdout.on('data', (d) => { out += d.toString(); });
+child.stderr.on('data', (d) => { out += d.toString(); });
 
-  try {
-    execSync(
-      `npx pkg agent-proxy.mjs --targets ${target} --output ${join(outDir, outName)} --compress GZip`,
-      { stdio: 'inherit' }
-    );
-    built++;
-  } catch (err) {
-    console.error(`Failed to build for ${target}:`, err.message);
-    failed++;
+const PORT_LINE = /AGENT_PROXY_PORT=(\d+)/;
+const deadline = setTimeout(() => {
+  console.error('❌ Proxy did not report a port within 6s.');
+  console.error(out);
+  child.kill('SIGKILL');
+  process.exit(1);
+}, 6000);
+
+child.stdout.on('data', () => {
+  const m = out.match(PORT_LINE);
+  if (m) {
+    clearTimeout(deadline);
+    const port = m[1];
+    console.log(`  ✅ Proxy booted on port ${port}`);
+    child.kill('SIGINT');
+    // Give it a moment to clean up its port file, then exit success.
+    setTimeout(() => process.exit(0), 400);
   }
-}
+});
 
-console.log(`\n✅ Sidecar build complete. Success: ${built}, Failed: ${failed} (graceful). Binaries in ${outDir}`);
-console.log('Update tauri.conf.json externalBin to point to the correct ones for your platform (platform variants or base).');
+child.on('exit', (code) => {
+  if (code !== 0 && !out.match(PORT_LINE)) {
+    console.error(`❌ Proxy exited with code ${code} before reporting a port.`);
+    console.error(out);
+    process.exit(1);
+  }
+});

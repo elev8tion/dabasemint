@@ -177,6 +177,40 @@ export function buildAgentTouchpointPrompt(id, context = {}) {
         `SELECTED_MODULES: ${JSON.stringify(context.selectedModules || [], null, 2)}`
       ].join('\n');
 
+    case 'generate-blueprint-docs':
+      return [
+        'You are the dabasemint Blueprint Documentation Writer.',
+        'Turn the completed composition into concise, ready-to-use documentation.',
+        'IMPORTANT: keep each string SHORT (under 120 words) to avoid truncation.',
+        'Return ONLY valid JSON — no prose outside the JSON, no markdown code fences:',
+        '{',
+        '  "readme": "short markdown README string",',
+        '  "connectionGuide": "short markdown CONNECTION guide string",',
+        '  "usageExample": "short code/config example string",',
+        '  "gotchas": ["short string"]',
+        '}',
+        '',
+        `BLUEPRINT: ${JSON.stringify(context.currentBlueprint || context.selectedModules || [], null, 2)}`,
+        `GOAL: ${context.goal || 'Build a composed application from these modules'}`
+      ].join('\n');
+
+    case 'reusability-audit':
+      return [
+        'You are a module reusability auditor for dabasemint.',
+        'Score how portable and well-documented the given module is, with concrete improvement suggestions.',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "reusabilityScore": 0-100,',
+        '  "portability": "high|medium|low",',
+        '  "documentationQuality": "high|medium|low",',
+        '  "strengths": ["string"],',
+        '  "improvements": [{"issue": "string", "fix": "string", "priority": "high|medium|low"}]',
+        '}',
+        '',
+        `MODULE: ${JSON.stringify(context.module || {}, null, 2)}`,
+        `PARENT_TOOLCHEST: ${context.toolchestName || 'unknown'}`
+      ].join('\n');
+
     default:
       return '';
   }

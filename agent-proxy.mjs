@@ -8,6 +8,9 @@
  */
 
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { getAgentProviderStatus, runAgentTouchpoint } from './src/agent-provider.mjs';
 
 const PORT = process.env.AGENT_PROXY_PORT || 0; // 0 = random available port
@@ -87,9 +90,6 @@ server.listen(PORT, '127.0.0.1', () => {
 
   // Write port file for reliable discovery (RECOMMENDATIONS.md)
   try {
-    const fs = require('fs');
-    const os = require('os');
-    const path = require('path');
     const dir = path.join(os.homedir(), '.dabasemint');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const portFile = path.join(dir, 'agent-proxy-port.json');
@@ -97,6 +97,22 @@ server.listen(PORT, '127.0.0.1', () => {
   } catch (e) { console.error('port file write failed', e); }
 });
 
-process.on('SIGTERM', () => {
+function cleanup() {
+  try {
+    const dir = path.join(os.homedir(), '.dabasemint');
+    const portFile = path.join(dir, 'agent-proxy-port.json');
+    if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
+  } catch {}
+}
+
+function shutdown(signal) {
+  console.log(`[dabasemint-agent-proxy] ${signal} received, shutting down`);
+  cleanup();
   server.close(() => process.exit(0));
-});
+  // Force-exit after a short grace period if server.close hangs
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('exit', cleanup);

@@ -38,11 +38,10 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "externalBin": [
-        "../sidecars/agent-proxy"
-      ],
       "resources": [
-        "../agent-proxy.mjs"
+        "../agent-proxy.mjs",
+        "../src/agent-provider.mjs",
+        "../src/agent-touchpoints.mjs"
       ]
     },
     "security": {

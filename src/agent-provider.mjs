@@ -255,6 +255,22 @@ export function buildProviderCompletionBody(providerId, prompt, {
   return body;
 }
 
+export function repairJsonString(str) {
+  // Repair common LLM JSON malformations:
+  //  1. raw control chars (0x00-0x1F) inside strings ("Bad control character")
+  //  2. invalid escape sequences like \( or \% ("Bad escaped character")
+  let s = String(str);
+  // Replace raw control chars with a space (valid JSON strings can't hold them).
+  // \n \t \r are already escaped in well-formed output; raw ones break parsing.
+  s = s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ' ');
+  // Keep newline/CR/tab inside strings by escaping them so multi-line values parse.
+  s = s.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  // Fix invalid escape sequences: a backslash not followed by a valid JSON escape
+  // char (" \ / b f n r t u). Turn "\<bad>" into "\\<bad>" (literal backslash).
+  s = s.replace(/\\(?!["\\\/bfnrtu])/g, '\\\\');
+  return s;
+}
+
 export function extractJsonFromCompletion(raw = '') {
   const trimmed = String(raw).trim();
   if (!trimmed) return { ok: false, error: 'Empty model response.' };
@@ -277,10 +293,16 @@ export function extractJsonFromCompletion(raw = '') {
   const start = trimmed.indexOf('{');
   const end = trimmed.lastIndexOf('}');
   if (start >= 0 && end > start) {
+    const slice = trimmed.slice(start, end + 1);
     try {
-      return { ok: true, data: JSON.parse(trimmed.slice(start, end + 1)) };
-    } catch (error) {
-      return { ok: false, error: `Could not parse JSON object from model response: ${error.message}` };
+      return { ok: true, data: JSON.parse(slice) };
+    } catch {
+      // Last resort: repair common LLM malformations (control chars, bad escapes).
+      try {
+        return { ok: true, data: JSON.parse(repairJsonString(slice)) };
+      } catch (error) {
+        return { ok: false, error: `Could not parse JSON object from model response: ${error.message}` };
+      }
     }
   }
 
@@ -299,6 +321,13 @@ export function extractCompletionText(payload) {
       .join('\n')
       .trim();
     if (text) return text;
+  }
+
+  // Reasoning models (e.g. Novita Nemotron) sometimes leave `content` empty and
+  // emit the actual answer in `reasoning_content`. Fall back to it so we don't
+  // throw "no text content" on valid responses.
+  if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim()) {
+    return message.reasoning_content.trim();
   }
 
   if (typeof choice?.text === 'string' && choice.text.trim()) return choice.text.trim();
@@ -450,55 +479,90 @@ export async function callNovitaCompletion(prompt, options = {}, fetchImpl = fet
  * See src/agent-touchpoints.mjs for the current catalog.
  */
 export async function runAgentTouchpoint(id, context = {}, options = {}, fetchImpl = fetch) {
-  // For now this is a thin wrapper. Real touchpoint definitions live in agent-touchpoints.mjs
-  // This allows future expansion without changing call sites.
   const { buildAgentTouchpointPrompt, validateAgentTouchpointResponse } = await import('./agent-touchpoints.mjs');
 
   const prompt = buildAgentTouchpointPrompt(id, context);
   if (!prompt) return { ok: false, error: `Unknown touchpoint: ${id}` };
 
   const providerId = options.provider || await resolveDefaultProviderId(options.preferredProvider);
-  const completion = await callProviderCompletion(providerId, prompt, options, fetchImpl);
-  if (!completion.ok) return completion;
 
-  const parsed = extractJsonFromCompletion(completion.content);
-  if (!parsed.ok) {
+  // Content-level retries: small reasoning models are non-deterministic and
+  // sometimes emit empty/degenerate output or unparseable JSON. A fresh call
+  // often succeeds, so retry on bad CONTENT (but never on network/config errors).
+  const contentRetries = Number.isFinite(options.contentRetries) ? options.contentRetries : 2;
+  const sleepFn = options.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+
+  let lastFailure = null;
+  for (let attempt = 0; attempt <= contentRetries; attempt += 1) {
+    // nudge temperature slightly on retries to escape degenerate outputs
+    const callOpts = attempt > 0 ? { ...options, temperature: Math.min(0.8, (options.temperature ?? 0.2) + 0.2 * attempt) } : options;
+
+    const completion = await callProviderCompletion(providerId, prompt, callOpts, fetchImpl);
+    if (!completion.ok) return completion; // network/config/auth error — do not retry
+
+    // Empty or degenerate content -> retry
+    if (!completion.content || completion.content.trim().length < 2) {
+      lastFailure = {
+        ok: false,
+        error: `${completion.provider || providerId} returned empty/degenerate content (attempt ${attempt + 1}).`,
+        raw: completion.content,
+        prompt,
+        provider: completion.provider,
+        model: completion.model,
+        contentAttempts: attempt + 1
+      };
+      if (attempt < contentRetries) { await sleepFn(250); continue; }
+      return lastFailure;
+    }
+
+    const parsed = extractJsonFromCompletion(completion.content);
+    if (!parsed.ok) {
+      lastFailure = {
+        ok: false,
+        error: `${parsed.error} (attempt ${attempt + 1})`,
+        raw: completion.content,
+        prompt,
+        provider: completion.provider,
+        model: completion.model,
+        contentAttempts: attempt + 1
+      };
+      if (attempt < contentRetries) { await sleepFn(250); continue; }
+      return lastFailure;
+    }
+
+    const validation = validateAgentTouchpointResponse(id, JSON.stringify(parsed.data));
+    if (!validation.ok) {
+      lastFailure = {
+        ok: false,
+        error: `Model JSON failed touchpoint validation (attempt ${attempt + 1}).`,
+        validationErrors: validation.errors,
+        raw: completion.content,
+        data: parsed.data,
+        prompt,
+        provider: completion.provider,
+        model: completion.model,
+        contentAttempts: attempt + 1
+      };
+      if (attempt < contentRetries) { await sleepFn(250); continue; }
+      return lastFailure;
+    }
+
     return {
-      ok: false,
-      error: parsed.error,
-      raw: completion.content,
+      ok: true,
+      id,
       prompt,
+      raw: completion.content,
+      data: validation.data,
+      model: completion.model,
       provider: completion.provider,
-      model: completion.model
+      usage: completion.usage,
+      attempts: completion.attempts,
+      retries: completion.retries,
+      contentAttempts: attempt + 1
     };
   }
 
-  const validation = validateAgentTouchpointResponse(id, JSON.stringify(parsed.data));
-  if (!validation.ok) {
-    return {
-      ok: false,
-      error: 'Model JSON failed touchpoint validation.',
-      validationErrors: validation.errors,
-      raw: completion.content,
-      data: parsed.data,
-      prompt,
-      provider: completion.provider,
-      model: completion.model
-    };
-  }
-
-  return {
-    ok: true,
-    id,
-    prompt,
-    raw: completion.content,
-    data: validation.data,
-    model: completion.model,
-    provider: completion.provider,
-    usage: completion.usage,
-    attempts: completion.attempts,
-    retries: completion.retries
-  };
+  return lastFailure || { ok: false, error: 'Touchpoint failed.', prompt, provider: providerId };
 }
 
 // Minor enhancement for R3: simple health ping helper (used by UI for proxy health)
