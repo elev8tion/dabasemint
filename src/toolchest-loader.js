@@ -180,7 +180,10 @@ async function discoverModules(dirHandle) {
             hasContracts = true;
           } catch {}
         }
-      } catch {}
+      } catch (e) {
+        // B3: replaced silent catch with warn for better debuggability (non-fatal)
+        console.warn(`Failed to inspect module ${entry.name}:`, e);
+      }
       modules.push({
         name: entry.name,
         role,
@@ -204,7 +207,9 @@ async function hasContracts(dirHandle) {
       for await (const f of shared.values()) {
         if (f.name.toLowerCase().includes('contract')) return true;
       }
-    } catch {}
+    } catch (e) {
+      console.warn('hasContracts fallback failed:', e);
+    }
   }
   return false;
 }
@@ -252,12 +257,18 @@ export async function refreshToolchestFromDisk(toolchest) {
     const stateHandle = await dirHandle.getFileHandle('.forge-state.md');
     const content = await (await stateHandle.getFile()).text();
     toolchest.forgeState = parseForgeState(content);
-  } catch {}
+  } catch (e) {
+    console.warn('Could not read .forge-state.md on refresh:', e.message);
+    toolchest.forgeState = {};
+  }
   try {
     const readmeHandle = await dirHandle.getFileHandle('README.md');
     const file = await readmeHandle.getFile();
     toolchest.readme = (await file.text()).slice(0, 1200);
-  } catch {}
+  } catch (e) {
+    console.warn('Could not read README on refresh:', e.message);
+    toolchest.readme = '';
+  }
   toolchest.contracts = await hasContracts(dirHandle);
   return toolchest;
 }
