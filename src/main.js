@@ -253,6 +253,17 @@ function getRichnessLabel(score) {
   return { label: 'Emerging', color: 'danger' };
 }
 
+// B2 helper: replaces multiple empty catch {} for Tauri/FS calls with consistent
+// logging + sensible fallback. Reduces silent degradation in desktop mode.
+async function safeTauriCall(operation, fallback = null, context = '') {
+  try {
+    return await operation();
+  } catch (e) {
+    console.warn(`Tauri/FS operation failed ${context}:`, e);
+    return fallback;
+  }
+}
+
 // ==================== AGENT ====================
 async function fetchAgentStatus() {
   try {
@@ -271,17 +282,18 @@ async function fetchProxyHealthAndPort() {
   let health = { ok: false };
   const isTauri = !!window.__TAURI__;
   if (isTauri && window.__TAURI__.invoke) {
-    try {
-      const p = await window.__TAURI__.invoke('get_agent_proxy_port');
-      if (p) port = p;
-    } catch {}
+    port = await safeTauriCall(
+      () => window.__TAURI__.invoke('get_agent_proxy_port'),
+      null,
+      'get_agent_proxy_port'
+    );
     if (!port && window.__TAURI__.fs) {
-      try {
+      const fsData = await safeTauriCall(async () => {
         const { readTextFile, BaseDirectory } = window.__TAURI__.fs;
         const data = await readTextFile('.dabasemint/agent-proxy-port.json', { dir: BaseDirectory.Home });
-        const parsed = JSON.parse(data);
-        if (parsed && parsed.port) port = parsed.port;
-      } catch {}
+        return JSON.parse(data);
+      }, null, 'read port file');
+      if (fsData && fsData.port) port = fsData.port;
     }
   }
   const base = port ? `http://127.0.0.1:${port}` : '';
