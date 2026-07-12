@@ -102,10 +102,10 @@ function toggleCommandPalette() {
   if (existing) { existing.remove(); paletteOpen = false; return; }
   const pal = document.createElement('div');
   pal.id = 'cmd-palette';
-  pal.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);background:#111;border:1px solid #39f6af33;padding:12px;border-radius:8px;z-index:9999;width:420px;box-shadow:0 10px 30px rgba(0,0,0,.6);';
+  pal.style.cssText = 'position:fixed;top:18%;left:50%;transform:translateX(-50%);z-index:9999;';
   pal.innerHTML = `
-    <input id="cmd-input" placeholder="Type command... (register, mint, export-real, trade, assay, palette close)" style="width:100%;background:#000;color:#fff;border:1px solid #39f6af55;padding:6px;" />
-    <div id="cmd-results" style="margin-top:8px;font-size:13px;max-height:220px;overflow:auto;"></div>
+    <input id="cmd-input" placeholder="Type command... (register, mint, export-real, trade, assay, palette close)" />
+    <div id="cmd-results" style="margin-top:8px;max-height:220px;overflow:auto;"></div>
   `;
   document.body.appendChild(pal);
   const input = pal.querySelector('#cmd-input');
@@ -126,9 +126,30 @@ function toggleCommandPalette() {
 
   input.oninput = () => {
     const q = input.value.toLowerCase();
-    results.innerHTML = ['register toolchest', 'export as real project', 'mint blueprint', 'run trade routes', 'assay first', 'close palette'].filter(c => c.includes(q)).map(c => `<div style="padding:4px;cursor:pointer" onclick="(function(){document.getElementById('cmd-palette')?.remove(); execCmd('${c}')})()">${c}</div>`).join('');
+    const cmds = [
+      { label: 'register toolchest', run: () => document.getElementById('addToolchestBtn')?.click() },
+      { label: 'export as real project', run: () => exportAsRealProject() },
+      { label: 'mint blueprint', run: () => mintBlueprint() },
+      { label: 'run trade routes', run: () => runTradeRoutes() },
+      { label: 'assay first', run: () => { const first = state.toolchests[0]; if (first) runTouchpoint('assay-toolchest', { toolchest: first }); } },
+      { label: 'export registry', run: () => exportRegistry() },
+      { label: 'import registry', run: () => importRegistry() },
+      { label: 'close palette', run: () => pal.remove() }
+    ];
+    results.innerHTML = '';
+    cmds
+      .filter(c => c.label.includes(q))
+      .forEach(c => {
+        const row = document.createElement('div');
+        row.textContent = c.label;
+        row.style.cssText = 'cursor:pointer;padding:4px 6px;border-radius:4px;';
+        row.onmouseenter = () => { row.style.background = 'rgba(34,200,255,0.12)'; };
+        row.onmouseleave = () => { row.style.background = ''; };
+        row.onclick = () => { pal.remove(); paletteOpen = false; c.run(); };
+        results.appendChild(row);
+      });
   };
-  input.onkeydown = (e) => { if (e.key === 'Enter') { execCmd(input.value); } if (e.key === 'Escape') pal.remove(); };
+  input.onkeydown = (e) => { if (e.key === 'Enter') { execCmd(input.value); } if (e.key === 'Escape') { pal.remove(); paletteOpen = false; } };
 }
 
 // Keyboard: Cmd/Ctrl + K
@@ -203,7 +224,16 @@ function loadState() {
 
     const hist = localStorage.getItem('dabasemint:agentHistory');
     if (hist) state.agentHistory = JSON.parse(hist);
-  } catch {}
+  } catch (err) {
+    // B1 fix: no longer silent. Log, provide safe defaults, non-intrusive toast.
+    console.error('Failed to load dabasemint state from localStorage (corrupted data?):', err);
+    state.toolchests = state.toolchests || [];
+    state.blueprint = state.blueprint || [];
+    state.agentHistory = state.agentHistory || [];
+    if (typeof toast === 'function') {
+      toast('State load issue — started with clean library (old data safe in localStorage backup)', 3000);
+    }
+  }
 }
 
 // ==================== SCORING & HEALTH ====================
@@ -271,10 +301,22 @@ async function fetchProxyHealthAndPort() {
 
 async function restartAgentProxy() {
   const el = $('agent-status');
-  if (el) el.innerHTML = `<span style="color:#ffcc00">Restarting / rechecking proxy...</span>`;
+  if (el) el.innerHTML = `<span style="color:#ffd166">Restarting proxy...</span>`;
+
+  const isTauri = !!(window.__TAURI__ && window.__TAURI__.invoke);
+  if (isTauri) {
+    try {
+      // Ask the managed sidecar to restart and return its new port.
+      const port = await window.__TAURI__.invoke('restart_agent_proxy');
+      toast(port ? `Agent proxy restarted on port ${port}` : 'Agent proxy restart returned no port (dev mode uses npm run serve)');
+    } catch (e) {
+      toast('Proxy restart failed: ' + (e?.message || e));
+    }
+  } else {
+    toast('Restart only applies to the desktop app. Web mode uses the running server.');
+  }
   await fetchProxyHealthAndPort();
   await fetchAgentStatus();
-  toast('Proxy health re-fetched. (To fully restart sidecar: restart tauri/serve process)');
   renderAgentStatus();
 }
 
@@ -654,11 +696,11 @@ function renderCollections() {
     if (lib && lib.parentElement) {
       container = document.createElement('div');
       container.id = 'collections-summary';
-      container.style.margin = '8px 0 16px';
+      container.style.margin = '4px 0 12px'; container.style.fontSize = '12px';
       lib.parentElement.insertBefore(container, lib);
     } else return;
   }
-  container.innerHTML = `<div style="font-size:12px;color:var(--muted)">Collections: ${tags.map(t => `<span class="tag" style="cursor:pointer" onclick="filterByTag('${t}')">${t} (${allTags[t]})</span>`).join(' ')} <button class="tiny" onclick="clearTagFilter()">clear</button></div>`;
+  container.innerHTML = `<div class="muted">Collections: ${tags.map(t => `<span class="tag" style="cursor:pointer" onclick="filterByTag('${t}')">${t} (${allTags[t]})</span>`).join(' ')} <button class="tiny" onclick="clearTagFilter()">clear</button></div>`;
 }
 
 function filterByTag(tag) {
@@ -709,11 +751,11 @@ function renderHealthDashboard() {
     const issueStr = issues.length ? issues.join(', ') : 'healthy';
     return `<div class="health-card">
       <div><strong>${tc.name}</strong> <span class="health-score ${label.color}">${score}</span></div>
-      <div style="font-size:11px; color:var(--muted); margin-top:2px;">${tc.sourceType || ''} • ${tc.modules?.length || 0} mods • ${issueStr}</div>
+      <div class="muted" style="font-size:11px; margin-top:2px;">${tc.sourceType || ''} • ${tc.modules?.length || 0} mods • ${issueStr}</div>
     </div>`;
   }).join('');
 
-  if (!cardsHtml) cardsHtml = '<div class="empty" style="padding:20px 10px;font-size:12px;">Register toolchests to see health dashboard.</div>';
+  if (!cardsHtml) cardsHtml = '<div class="empty-card" style="padding:16px 10px;font-size:12px;">Register toolchests to see health dashboard.</div>';
 
   container.innerHTML = `
     <div class="section-header"><h2>Registry Health Dashboard</h2><p>Global stats + per-toolchest health</p></div>
@@ -751,7 +793,7 @@ function renderLibrary() {
   }
 
   if (!filtered.length) {
-    container.innerHTML = `<div class="empty-card">No matches. <button onclick="clearFilters()">Clear filters</button></div>`;
+    container.innerHTML = `<div class="empty-card">No matches. <button class="tiny" onclick="clearFilters()">Clear filters</button></div>`;
     return;
   }
 
@@ -764,7 +806,7 @@ function renderLibrary() {
           <div>
             <strong>${tc.name}</strong>
             <span class="badge source-${tc.sourceType}">${tc.sourceType}</span>
-            ${tc.contracts ? '<span class="badge" style="background:#39f6af22;color:#39f6af">contracts</span>' : ''}
+            ${tc.contracts ? '<span class="badge" style="background:#39f6af22;color:#39f6af;border:none">contracts</span>' : ''}
           </div>
           <div class="health">
             <span class="health-score ${richness.color}">${health}</span>
@@ -865,7 +907,7 @@ function renderSelectedAnatomy() {
       <span class="muted">${m.role}</span>
       <span>${m.loc}</span>
       <div>
-        ${m.hasContracts ? '<span class="tag" style="background:#39f6af22;color:#39f6af">contracts</span>' : ''}
+        ${m.hasContracts ? '<span class="badge" style="background:#39f6af22;color:#39f6af;border:none">contracts</span>' : ''}
         ${m.hasReadme ? '<span class="tag">readme</span>' : ''}
         <button class="tiny" onclick="addModuleToBlueprint('${tc.id}', '${m.name}')">+ Blueprint</button>
         <button class="tiny" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', JSON.stringify({toolchestId:'${tc.id}', module:'${m.name}'}))">Drag</button>
@@ -918,7 +960,7 @@ function renderSimpleGraph(tc) {
     const y = 25 + i * yStep;
     const x = 60 + (i % 3) * 180;
     nodes += `<g>
-      <rect x="${x-50}" y="${y-10}" width="160" height="20" rx="4" fill="#0a1428" stroke="#3a5a7a"/>
+      <rect x="${x-50}" y="${y-10}" width="160" height="20" rx="4" fill="#0c1628" stroke="#3a5a7a"/>
       <text x="${x+30}" y="${y+4}" fill="#a8d4ff" font-size="11">${m.name}</text>
     </g>`;
     if (i > 0) {
@@ -957,7 +999,7 @@ function showModuleModal(tcId, modName) {
       ${contractsPreview}
       <div class="modal-actions">
         <button class="primary-btn" onclick="addModuleToBlueprint('${tcId}','${modName}');closeModal()">Add to Blueprint</button>
-        <button onclick="closeModal()">Close</button>
+        <button class="ghost-btn" onclick="closeModal()">Close</button>
       </div>
     </div>
   `;
@@ -995,7 +1037,7 @@ window.showHelp = () => {
     document.body.appendChild(helpModal);
   }
   helpModal.innerHTML = `
-    <div class="modal-content" style="max-width:600px">
+    <div class="modal-content" style="max-width:620px">
       <button class="close" onclick="closeHelp()">×</button>
       <h2>dabasemint — Plan Complete ✅</h2>
       <p><strong>Strategic Plan fully implemented.</strong></p>
@@ -1009,7 +1051,7 @@ window.showHelp = () => {
       <p>Use + Register to load your /forge toolchests. Everything is local.</p>
       <p>See STRATEGIC-PLAN.md for details.</p>
       <div class="modal-actions">
-        <button onclick="closeHelp()">Got it</button>
+        <button class="ghost-btn" onclick="closeHelp()">Got it</button>
       </div>
     </div>
   `;
@@ -1025,7 +1067,7 @@ function renderComposition() {
   const bpScore = computeBlueprintScore();
 
   if (!state.blueprint.length) {
-    canvas.innerHTML = `<div class="empty drop-zone">Blueprint empty. Drag modules here from Anatomy or click + Blueprint.<br><small>Drop zone active</small></div>`;
+    canvas.innerHTML = `<div class="empty drop-zone">Blueprint empty. Drag modules here from Anatomy or click + Blueprint.<br><small>Drop zone active — supports reorder</small></div>`;
   } else {
     const items = state.blueprint.map((b, i) => {
       const tc = state.toolchests.find(t => t.id === b.toolchestId);
@@ -1034,7 +1076,7 @@ function renderComposition() {
         <div>
           <button class="tiny" onclick="moveBlueprintItem(${i}, -1); renderComposition()">↑</button>
           <button class="tiny" onclick="moveBlueprintItem(${i}, 1); renderComposition()">↓</button>
-          <button onclick="removeFromBlueprint(${i})">×</button>
+          <button class="tiny" onclick="removeFromBlueprint(${i})">×</button>
         </div>
       </div>`;
     }).join('');
@@ -1043,12 +1085,12 @@ function renderComposition() {
       <div class="bp-header">
         <strong>Blueprint (${state.blueprint.length}) <span class="health-score ${bpScore.color}">${bpScore.score}</span></strong>
         <div>
-          <button onclick="runCompositionAdvisor()">Run Composition Advisor</button>
-          <button onclick="exportBlueprint()">Export JSON</button>
-          <button onclick="exportAsRealProject()">Export as Real Project</button>
-          <button onclick="mintBlueprint()">Mint Blueprint</button>
-          <button onclick="generateContextPack()">Generate Context Pack</button>
-          <button onclick="clearBlueprint()">Clear</button>
+          <button class="tiny" onclick="runCompositionAdvisor()">Advisor</button>
+          <button class="tiny" onclick="exportBlueprint()">Export JSON</button>
+          <button class="tiny" onclick="exportAsRealProject()">Export Real</button>
+          <button class="tiny" onclick="mintBlueprint()">Mint</button>
+          <button class="tiny" onclick="generateContextPack()">Context Pack</button>
+          <button class="tiny" onclick="clearBlueprint()">Clear</button>
         </div>
       </div>
       <div class="bp-list drop-zone">${items}</div>
@@ -1116,7 +1158,8 @@ function reorderBlueprint(targetIndex, event) {
 
 async function runCompositionAdvisor() {
   const container = $('advisor-results');
-  container.innerHTML = 'Asking advisor...';
+  if (!container) return;
+  container.innerHTML = '<div class="muted">Asking advisor...</div>';
 
   const context = {
     currentBlueprint: state.blueprint.map(b => {
@@ -1127,14 +1170,63 @@ async function runCompositionAdvisor() {
   };
 
   const result = await runTouchpoint('composition-advisor', context);
-  if (result.ok) {
-    container.innerHTML = `<pre class="agent-result">${JSON.stringify(result.data, null, 2)}</pre>
-      <button onclick="applyAdvisorSuggestions()">Apply suggestions to blueprint</button>`;
+  if (result.ok && result.data) {
+    state.lastAgentResults['composition-advisor'] = result;
+    container.innerHTML = renderAdvisorCard(result.data);
+  } else {
+    container.innerHTML = `<div class="agent-result-card error">Advisor failed: ${result.error || 'unknown error'}</div>`;
   }
 }
 
+function renderAdvisorCard(data) {
+  const li = (arr) => Array.isArray(arr) && arr.length
+    ? `<ul>${arr.map(x => `<li>${String(x)}</li>`).join('')}</ul>`
+    : '<div class="muted">—</div>';
+  const conflicts = Array.isArray(data.potentialConflicts) && data.potentialConflicts.length
+    ? data.potentialConflicts.map(c => `<li><strong>${(c.modules || []).join(' + ')}</strong>: ${c.issue || ''}${c.resolution ? ' → <em>' + c.resolution + '</em>' : ''}</li>`).join('')
+    : '<li class="muted">None detected</li>';
+  return `
+    <div class="advisor-card">
+      <div><strong>Assessment:</strong> <span class="health-score">${data.overallAssessment || '?'}</span></div>
+      <div><strong>Recommended wiring</strong>${li(data.recommendedWiring)}</div>
+      <div><strong>Suggested adapters</strong>${li(data.suggestedAdapters)}</div>
+      <div><strong>Missing pieces</strong>${li(data.missingPieces)}</div>
+      <div><strong>Potential conflicts</strong><ul>${conflicts}</ul></div>
+      <div><strong>Next steps</strong>${li(data.nextSteps)}</div>
+      <div class="modal-actions">
+        <button class="tiny" onclick="applyAdvisorSuggestions()">Auto-add findable missing pieces</button>
+        <button class="tiny" onclick="exportBlueprint()">Export blueprint</button>
+      </div>
+    </div>`;
+}
+
 function applyAdvisorSuggestions() {
-  toast('In a full version this would intelligently add recommended modules');
+  const result = state.lastAgentResults['composition-advisor'];
+  if (!result || !result.ok || !result.data) return toast('No advisor result to apply');
+  const missing = Array.isArray(result.data.missingPieces) ? result.data.missingPieces : [];
+  if (!missing.length) return toast('No missing pieces to apply');
+
+  // Try to find any missing-piece names that match modules already in the library
+  let added = 0;
+  let unmatched = 0;
+  missing.forEach(piece => {
+    const text = String(piece).toLowerCase();
+    let best = null;
+    for (const tc of state.toolchests) {
+      const match = tc.modules.find(m =>
+        text.includes(m.name.toLowerCase()) || m.name.toLowerCase().includes(text.slice(0, 6)));
+      if (match && !state.blueprint.some(b => b.module === match.name)) {
+        best = { tcId: tc.id, mod: match.name };
+        break;
+      }
+    }
+    if (best) { addModuleToBlueprint(best.tcId, best.mod); added++; } else { unmatched++; }
+  });
+
+  renderComposition();
+  toast(added
+    ? `Added ${added} findable missing piece(s)${unmatched ? ` (${unmatched} not in library)` : ''}`
+    : 'None of the suggested missing pieces exist in your library');
 }
 
 // ==================== AGENT ENHANCEMENTS ====================
@@ -1146,26 +1238,49 @@ function renderAgentStatus() {
   const portStr = ph.port ? `port:${ph.port}` : 'no-port';
   const h = ph.health || {};
   const healthBadge = h.ok ? '🟢 healthy' : (h.error ? '🔴 ' + h.error : '⚪ unknown');
-  // R3: better multi-provider health summary from enhanced status
-  const provCount = (s.providers && s.providers.length) ? s.providers.filter(p => p.configured).length : (s.configured ? 1 : 0);
-  const mp = s.multiProvider ? ` (${provCount} cfg)` : '';
+  // Multi-provider health summary from enhanced status
+  const providers = (s.providers && s.providers.length) ? s.providers : [
+    { id: 'novita', name: 'Novita', configured: !!s.configured }
+  ];
+  const provCount = providers.filter(p => p.configured).length;
+  const mp = s.multiProvider ? ` (${provCount}/${providers.length} cfg)` : '';
   // small logs/status panel: recent agent activity + proxy health
   const recentLogs = (state.agentHistory || []).slice(0, 3).map(h => `${h.id}:${h.result && h.result.ok ? 'ok' : 'err'}`).join(' ');
   const proxyDetail = h.port ? `p:${h.port}` : '';
+
+  // Build the provider dropdown dynamically so unconfigured providers are
+  // visibly marked (e.g. GLM without a key) and warned on selection.
+  const options = providers.map(p => {
+    const flag = p.configured ? '✅' : '⚠️';
+    const note = p.configured ? '' : ' (no key)';
+    return `<option value="${p.id}" ${!p.configured ? 'data-unconfigured="1"' : ''}>${flag} ${p.name}${note}</option>`;
+  }).join('');
+
   el.innerHTML = `
-    <select id="agent-sel">
-      <option value="novita">Novita</option>
-      <option value="g0dm0d3-glm">G0DM0D3 GLM</option>
-    </select>
+    <select id="agent-sel" title="AI provider">${options}</select>
     <span>${s.configured ? '✅' : '❌'} ${s.provider || ''}${mp}</span>
-    <span class="proxy-health" style="font-size:10px;margin-left:6px;border:1px solid #39f6af33;padding:1px 4px;border-radius:3px;">${portStr} ${healthBadge} ${proxyDetail}</span>
-    <button id="restart-proxy-btn" style="font-size:10px;padding:1px 4px;margin-left:4px;">↻ Restart</button>
-    <div class="proxy-logs" style="font-size:9px;opacity:0.7;margin-top:2px;" title="Recent agent activity + proxy status">${recentLogs || 'no recent'} | ${h.ok ? 'proxy up' : 'proxy ?'}</div>
+    <span class="proxy-health">${portStr} ${healthBadge} ${proxyDetail}</span>
+    <button id="restart-proxy-btn" class="tiny" style="font-size:10px;padding:1px 5px;margin-left:4px;" title="Restart agent proxy (desktop app)">↻</button>
+    <div class="proxy-logs" title="Recent agent activity + proxy status">${recentLogs || 'no recent'} | ${h.ok ? 'proxy up' : 'proxy ?'}</div>
   `;
   const sel = $('agent-sel');
   if (sel) {
     sel.value = state.agentProviderChoice;
+    // If the saved choice is an unconfigured provider, fall back to a configured one.
+    const chosenOpt = sel.selectedOptions[0];
+    if (chosenOpt && chosenOpt.dataset.unconfigured) {
+      const configured = providers.find(p => p.configured);
+      if (configured) {
+        state.agentProviderChoice = configured.id;
+        localStorage.setItem('dabasemint:agent-provider', configured.id);
+        sel.value = configured.id;
+      }
+    }
     sel.onchange = () => {
+      const opt = sel.selectedOptions[0];
+      if (opt && opt.dataset.unconfigured) {
+        toast(`${opt.textContent} has no API key configured. Add it to config/agent.local.json to use it.`);
+      }
       state.agentProviderChoice = sel.value;
       localStorage.setItem('dabasemint:agent-provider', state.agentProviderChoice);
       fetchAgentStatus();
@@ -1186,10 +1301,10 @@ function renderAgentResult(id, result) {
     <pre>${result.ok ? JSON.stringify(result.data, null, 2) : result.error}</pre>`;
 
   if (id === 'assay-toolchest' && result.ok) {
-    html += `<button onclick="applyAssayResult()">Apply tags & notes</button>`;
+    html += `<button class="tiny" onclick="applyAssayResult()">Apply tags & notes</button>`;
   }
   if (id === 'find-complements' && result.ok && result.data && result.data.complements) {
-    html += `<button onclick="applyComplementsResult()">Add top complements to blueprint</button>`;
+    html += `<button class="tiny" onclick="applyComplementsResult()">Add top complements</button>`;
   }
   html += `</div>`;
 
@@ -1428,6 +1543,11 @@ function setupGlobalEvents() {
     }
   });
 
+  // Search + filter inputs always exist in index.html, so always wire them.
+  // (Previously setupFilters() was only called inside the "create if missing"
+  //  branch, which never ran — leaving search/filter unwired.)
+  setupFilters();
+
   // Add search + filter UI if missing
   const libHeader = document.querySelector('#library-grid')?.parentElement;
   if (libHeader && !document.getElementById('search-input')) {
@@ -1522,8 +1642,68 @@ async function init() {
   console.log('%c[dabasemint] Enhanced & healthy. Ready.', 'color:#22c8ff');
 }
 
-window.dabasemint = { state, runTouchpoint, loadReferenceToolchests, exportBlueprint };
+// ==================== TOAST ====================
+// Called ~35x across the app but was previously never defined.
+let toastTimer = null;
+function toast(message, duration = 2600) {
+  const el = $('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+  el.style.opacity = '1';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, duration);
+}
+
+// ==================== WINDOW EXPORTS ====================
+// src/main.js is loaded as an ES module, so inline onclick attribute
+// handlers in index.html and in dynamically-rendered markup run in GLOBAL
+// scope and would otherwise throw ReferenceError. Inline handlers call bare
+// names (e.g. onclick="exportRegistry()"), so each handler MUST be assigned
+// as a DIRECT property of window — nesting them under window.dabasemint is
+// NOT enough. Explicit assignments are used (not eval) so esbuild's minifier
+// keeps them correct in the production bundle. The test suite enforces this.
+window.toast = toast;
 window.state = state;
+window.runTouchpoint = runTouchpoint;
+window.loadReferenceToolchests = loadReferenceToolchests;
+window.exportBlueprint = exportBlueprint;
+window.exportAsRealProject = exportAsRealProject;
+window.mintBlueprint = mintBlueprint;
+window.generateContextPack = generateContextPack;
+window.runTradeRoutes = runTradeRoutes;
+window.runAssay = runAssay;
+window.runComplements = runComplements;
+window.runCompositionAdvisor = runCompositionAdvisor;
+window.addModuleToBlueprint = addModuleToBlueprint;
+window.removeFromBlueprint = removeFromBlueprint;
+window.moveBlueprintItem = moveBlueprintItem;
+window.reorderBlueprint = reorderBlueprint;
+window.clearBlueprint = clearBlueprint;
+window.exportRegistry = exportRegistry;
+window.importRegistry = importRegistry;
+window.compareLastTwo = compareLastTwo;
+window.toggleCommandPalette = toggleCommandPalette;
+window.showHelp = showHelp;
+window.closeHelp = closeHelp;
+window.closeModal = closeModal;
+window.filterByTag = filterByTag;
+window.clearTagFilter = clearTagFilter;
+window.clearFilters = clearFilters;
+window.applyAssayResult = applyAssayResult;
+window.applyComplementsResult = applyComplementsResult;
+window.applyAdvisorSuggestions = applyAdvisorSuggestions;
+window.showModuleModal = showModuleModal;
+window.loadContractsPreview = loadContractsPreview;
+// Convenience aggregate (kept for window.dabasemint.exportBlueprint style calls).
+window.dabasemint = {
+  state, runTouchpoint, loadReferenceToolchests, exportBlueprint, exportAsRealProject,
+  mintBlueprint, generateContextPack, runTradeRoutes, runAssay, runComplements,
+  runCompositionAdvisor, addModuleToBlueprint, removeFromBlueprint, moveBlueprintItem,
+  reorderBlueprint, clearBlueprint, exportRegistry, importRegistry, compareLastTwo,
+  toggleCommandPalette, showHelp, filterByTag, clearTagFilter, clearFilters,
+  applyAssayResult, applyComplementsResult, applyAdvisorSuggestions, showModuleModal, toast
+};
 
 // Tauri integration hook
 if (window.__TAURI__) {
