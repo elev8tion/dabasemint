@@ -19,7 +19,7 @@
  * - High-quality context pack generation
  * - Cross-toolchest discovery
  *
- * See STRATEGIC-PLAN.md "Agentic Layer" section.
+ * See docs/CURRENT-STATE.md for current operating context.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -479,8 +479,14 @@ export async function callNovitaCompletion(prompt, options = {}, fetchImpl = fet
  * See src/agent-touchpoints.mjs for the current catalog.
  */
 export async function runAgentTouchpoint(id, context = {}, options = {}, fetchImpl = fetch) {
-  // Pi everywhere integration — user-requested primary path (replaces agentic-core)
-  if (options.piEverywhere !== false) {
+  const explicitProviderPath = Boolean(options.provider || options.apiKey || options.baseUrl || options.model);
+  const injectedFetchPath = fetchImpl !== fetch;
+
+  // Pi everywhere integration — user-requested primary path (replaces agentic-core),
+  // but never bypass explicit provider/test paths. This keeps deterministic provider
+  // validation and mocked no-network tests intact while preserving Pi delegation for
+  // default CLI/UI calls that do not request a concrete provider.
+  if (options.piEverywhere === true || (options.piEverywhere !== false && !explicitProviderPath && !injectedFetchPath)) {
     return await runWithPiEverywhere(id, context);
   }
 

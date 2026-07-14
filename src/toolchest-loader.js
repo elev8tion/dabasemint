@@ -13,7 +13,7 @@
  */
 
 export async function registerToolchestFromDisk(preferredName = null) {
-  // STRONGLY PREFER native Tauri invoke for all FS (RECOMMENDATIONS: native-first)
+  // Strongly prefer native Tauri invoke for all FS in desktop mode.
   if (window.__TAURI__ && window.__TAURI__.invoke) {
     try {
       const selectedPath = await window.__TAURI__.invoke('pick_folder_native');
@@ -74,7 +74,9 @@ export async function registerToolchestFromDisk(preferredName = null) {
     try {
       await dirHandle.getFileHandle('.forge-state.md');
       hasForgeState = true;
-    } catch {}
+    } catch (err) {
+      console.info('No .forge-state.md found during registration; continuing with structural scan:', err?.message || err);
+    }
 
     for await (const entry of dirHandle.values()) {
       if (entry.kind === 'directory' && /^\d{2}-/.test(entry.name)) {
@@ -118,7 +120,9 @@ export async function registerToolchestFromDisk(preferredName = null) {
       const file = await readmeHandle.getFile();
       const content = await file.text();
       toolchest.readme = content.slice(0, 1200);
-    } catch {}
+    } catch (err) {
+      console.info(`No README.md found for ${name}; using empty preview:`, err?.message || err);
+    }
 
     // Discover numbered modules
     toolchest.modules = await discoverModules(dirHandle);
@@ -171,14 +175,18 @@ async function discoverModules(dirHandle) {
           const firstLines = text.split('\n').slice(0, 5).join(' ');
           const match = firstLines.match(/(?:^|\n)([A-Z][^.!?]{20,80})/);
           if (match) role = match[1].trim().slice(0, 70);
-        } catch {}
+        } catch (err) {
+          console.info(`Could not extract README role for module ${entry.name}; using default role:`, err?.message || err);
+        }
 
         // Check for contracts inside module if it's the shared one
         if (entry.name === '00-shared') {
           try {
             await entry.getFileHandle('contracts.md');
             hasContracts = true;
-          } catch {}
+          } catch (err) {
+            console.info('00-shared/contracts.md not found during module scan:', err?.message || err);
+          }
         }
       } catch (e) {
         // B3: replaced silent catch with warn for better debuggability (non-fatal)
@@ -201,7 +209,8 @@ async function hasContracts(dirHandle) {
   try {
     await dirHandle.getFileHandle('00-shared/contracts.md');
     return true;
-  } catch {
+  } catch (err) {
+    console.info('Direct 00-shared/contracts.md lookup failed; scanning shared directory:', err?.message || err);
     try {
       const shared = await dirHandle.getDirectoryHandle('00-shared');
       for await (const f of shared.values()) {

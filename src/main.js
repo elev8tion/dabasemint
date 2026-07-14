@@ -26,7 +26,21 @@ let state = {
   lastAgentResults: {},
   agentHistory: [],
   searchTerm: '',
-  filterType: 'all'
+  filterType: 'all',
+  // === UX overhaul additions ===
+  activeTab: 'library',
+  onboardingSeen: localStorage.getItem('dabasemint:onboarding-seen') === '1',
+  startHereDismissed: localStorage.getItem('dabasemint:start-here-dismissed') === '1',
+  savedSearches: JSON.parse(localStorage.getItem('dabasemint:saved-searches') || '[]'),
+  compareQueue: [],        // [{toolchestId, module}] for side-by-side compare
+  exportHistory: JSON.parse(localStorage.getItem('dabasemint:export-history') || '[]'),
+  undoStack: [],           // [{label, restore()}] one-deep
+  fileStatus: {},          // toolchestId -> 'connected'|'missing'|'changed'|'stale'|'permission'
+  filterRole: 'all',
+  filterContractsOnly: false,
+  filterHealthMin: 0,
+  wizardStep: 0,           // -1 = closed
+  lastAgentMeta: null      // {id, ts, confidence, costMs, provider}
 };
 
 // R3: proxy health state (declared early for use in fetchAgentStatus)
@@ -94,7 +108,132 @@ const REFERENCE_TOOLCHESTS = [
   }
 ];
 
-// ==================== COMMAND PALETTE (RECOMMENDATIONS polish) ====================
+// ==================== GLOSSARY (terminology hints) ====================
+const TERMS = {
+  toolchest: 'A folder of extracted reusable modules — typically the output of a /forge run.',
+  blueprint: 'Your selected set of modules, composed together to form a new project.',
+  mint: 'Save this blueprint as a reusable library item (a new minted toolchest).',
+  assay: 'Analyze a toolchest for quality and reuse potential, then tag it.',
+  trade: 'Find useful connections and powerful combinations between toolchests.',
+  anatomy: 'The module-level breakdown of a single toolchest.',
+  contracts: 'Interface definitions that describe how a module expects to be used.'
+};
+
+// Apply data-tip attributes to every <dfn data-term> in the document.
+function applyGlossaryTooltips(root = document) {
+  root.querySelectorAll('dfn[data-term]:not([data-tip])').forEach(el => {
+    const tip = TERMS[el.dataset.term];
+    if (tip) el.setAttribute('data-tip', tip);
+  });
+}
+
+// ==================== TABS ====================
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('active', p.dataset.tabPanel === tab));
+  // advanced panels share the 'advanced-' prefix
+  if (tab.startsWith('advanced-')) {
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.dataset.tabPanel === tab));
+  }
+  renderNextSteps();
+  window.scrollTo({ top: document.getElementById('tab-bar')?.offsetTop - 8 || 0, behavior: 'smooth' });
+}
+
+function showAdvanced(which) {
+  const map = { snapshots: 'advanced-snapshots', trade: 'advanced-trade', providers: 'advanced-providers' };
+  setActiveTab(map[which] || 'advanced-snapshots');
+  if (which === 'providers') renderProvidersPanel();
+  if (which === 'snapshots') renderSnapshotsPanel();
+}
+
+// ==================== EMPTY STATE HELPER ====================
+function renderEmptyState(container, { icon = '📭', title, body, actions = [] }) {
+  if (!container) return;
+  const acts = actions.map(a =>
+    `<button class="${a.primary ? 'primary-btn' : 'secondary-btn'}" data-es-action="${a.id}">${a.label}</button>`
+  ).join('');
+  container.innerHTML = `<div class="empty-state">
+    <div class="es-icon">${icon}</div>
+    <h3>${title}</h3>
+    <p>${body}</p>
+    <div class="es-actions">${acts}</div>
+  </div>`;
+  container.querySelectorAll('[data-es-action]').forEach(btn => {
+    btn.onclick = () => {
+      const a = actions.find(x => x.id === btn.dataset.esAction);
+      if (a && typeof a.onClick === 'function') a.onClick();
+    };
+  });
+}
+
+// ==================== REUSABLE MODAL ====================
+function openModal({ title = '', bodyHtml = '', wide = false, actions = [], onMount }) {
+  const host = $('modal-host');
+  if (!host) return;
+  host.innerHTML = '';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `<div class="modal-card ${wide ? 'wide' : ''}">
+    <button class="modal-x" aria-label="Close">×</button>
+    ${title ? `<h2>${title}</h2>` : ''}
+    <div class="modal-body"></div>
+    <div class="modal-actions"></div>
+  </div>`;
+  host.appendChild(modal);
+  const body = modal.querySelector('.modal-body');
+  body.innerHTML = bodyHtml;
+  const actionsEl = modal.querySelector('.modal-actions');
+  actions.forEach(a => {
+    const b = document.createElement('button');
+    b.className = a.primary ? 'primary-btn' : 'ghost-btn';
+    b.textContent = a.label;
+    b.onclick = () => a.onClick({ modal, body, close: () => closeModalHost() });
+    actionsEl.appendChild(b);
+  });
+  modal.querySelector('.modal-x').onclick = closeModalHost;
+  modal.onclick = e => { if (e.target === modal) closeModalHost(); };
+  if (typeof onMount === 'function') onMount({ modal, body });
+  return { modal, body };
+}
+function closeModalHost() { const h = $('modal-host'); if (h) h.innerHTML = ''; }
+
+// ==================== SUCCESS CARD ====================
+let successCardTimer = null;
+function showSuccessCard({ title = 'Done', summary = '', links = [], undo = null, duration = 6000 }) {
+  const old = document.querySelector('.success-card'); if (old) old.remove();
+  const card = document.createElement('div');
+  card.className = 'success-card';
+  const linksHtml = links.map(l =>
+    `<button data-sc-link="${l.id}">${l.label}</button>`
+  ).join('');
+  card.innerHTML = `
+    <button class="sc-close" aria-label="Close">×</button>
+    <div class="sc-title">✅ ${title}</div>
+    ${summary ? `<div class="sc-summary">${summary}</div>` : ''}
+    ${linksHtml ? `<div class="sc-links">${linksHtml}</div>` : ''}
+    <div class="sc-actions"></div>
+  `;
+  document.body.appendChild(card);
+  const actionsEl = card.querySelector('.sc-actions');
+  if (undo) {
+    const ub = document.createElement('button'); ub.className = 'ghost-btn tiny'; ub.textContent = '↩ Undo';
+    ub.onclick = () => { try { undo.restore(); } catch (e) { console.warn(e); } card.remove(); toast('Undone'); };
+    actionsEl.appendChild(ub);
+  }
+  card.querySelector('.sc-close').onclick = () => card.remove();
+  links.forEach(l => {
+    const b = card.querySelector(`[data-sc-link="${l.id}"]`);
+    if (b) b.onclick = () => { try { l.onClick(); } catch (e) { console.warn(e); } };
+  });
+  if (successCardTimer) clearTimeout(successCardTimer);
+  if (duration > 0) successCardTimer = setTimeout(() => card.remove(), duration);
+}
+
+// ==================== COMMAND PALETTE ====================
 let paletteOpen = false;
 
 function toggleCommandPalette() {
@@ -162,6 +301,10 @@ function saveState() {
   localStorage.setItem('dabasemint:toolchests', JSON.stringify(state.toolchests));
   localStorage.setItem('dabasemint:blueprint', JSON.stringify(state.blueprint));
   localStorage.setItem('dabasemint:agentHistory', JSON.stringify(state.agentHistory));
+  localStorage.setItem('dabasemint:saved-searches', JSON.stringify(state.savedSearches || []));
+  localStorage.setItem('dabasemint:export-history', JSON.stringify(state.exportHistory || []));
+  localStorage.setItem('dabasemint:onboarding-seen', state.onboardingSeen ? '1' : '0');
+  localStorage.setItem('dabasemint:start-here-dismissed', state.startHereDismissed ? '1' : '0');
 }
 
 function exportRegistry() {
@@ -224,6 +367,11 @@ function loadState() {
 
     const hist = localStorage.getItem('dabasemint:agentHistory');
     if (hist) state.agentHistory = JSON.parse(hist);
+
+    const ss = localStorage.getItem('dabasemint:saved-searches');
+    if (ss) state.savedSearches = JSON.parse(ss);
+    const eh = localStorage.getItem('dabasemint:export-history');
+    if (eh) state.exportHistory = JSON.parse(eh);
   } catch (err) {
     // B1 fix: no longer silent. Log, provide safe defaults, non-intrusive toast.
     console.error('Failed to load dabasemint state from localStorage (corrupted data?):', err);
@@ -269,8 +417,14 @@ async function fetchAgentStatus() {
   try {
     const res = await fetch(`/api/agent/status?provider=${encodeURIComponent(state.agentProviderChoice)}`);
     state.agentProviderStatus = await res.json();
-  } catch {
-    state.agentProviderStatus = { configured: false, provider: state.agentProviderChoice, model: 'nvidia/nemotron-3-nano-30b-a3b' };
+  } catch (err) {
+    console.warn('Agent status fetch failed; using offline provider status:', err);
+    state.agentProviderStatus = {
+      configured: false,
+      provider: state.agentProviderChoice,
+      model: 'nvidia/nemotron-3-nano-30b-a3b',
+      error: 'status-unreachable'
+    };
   }
   await fetchProxyHealthAndPort();
   renderAgentStatus();
@@ -356,7 +510,9 @@ async function runTouchpoint(id, context = {}) {
         const portData = await readTextFile('.dabasemint/agent-proxy-port.json', { dir: BaseDirectory.Home });
         const parsed = JSON.parse(portData);
         if (parsed.port) baseUrl = `http://127.0.0.1:${parsed.port}`;
-      } catch {}
+      } catch (err) {
+        console.warn('Could not read agent proxy port file fallback:', err);
+      }
     }
   }
 
@@ -387,6 +543,16 @@ async function runTouchpoint(id, context = {}) {
     if (state.agentHistory.length > 12) state.agentHistory.pop();
     saveState();
 
+    // Capture metadata for the Agent Actions strip.
+    state.lastAgentMeta = {
+      id,
+      ts: Date.now(),
+      confidence: result?.data?.confidence ?? (result?.ok ? 'n/a' : 'low'),
+      costMs: result?.data?.costMs ?? null,
+      provider: state.agentProviderChoice
+    };
+    renderAgentActionsPanel();
+
     renderAgentResult(id, result);
     return result;
   } catch (e) {
@@ -405,7 +571,16 @@ function registerToolchest(data) {
   state.toolchests.push({ ...data, addedAt: Date.now() });
   saveState();
   renderAll();
-  toast(`Registered ${data.name}`);
+  showSuccessCard({
+    title: `Registered ${data.name}`,
+    summary: `${data.modules?.length || 0} modules loaded from ${data.sourceType || 'source'}.`,
+    links: [
+      { id: 'assay', label: '🧪 Run assay', onClick: () => runAssay(data.id) },
+      { id: 'anatomy', label: '🔬 Inspect anatomy', onClick: () => { setActiveTab('anatomy'); selectToolchest(data.id); } },
+      { id: 'core', label: '➕ Add core modules to blueprint', onClick: () => addAllModulesToBlueprint(data.id) }
+    ],
+    duration: 7000
+  });
 
   // Auto-validate after registration (helps catch bad loads early)
   setTimeout(() => validateToolchest(data.id), 800);
@@ -426,11 +601,27 @@ function validateToolchest(id) {
 }
 
 function removeToolchest(id) {
+  const idx = state.toolchests.findIndex(t => t.id === id);
+  if (idx < 0) return;
+  const removed = state.toolchests[idx];
+  const removedBp = state.blueprint.filter(b => b.toolchestId === id);
   state.toolchests = state.toolchests.filter(t => t.id !== id);
   state.blueprint = state.blueprint.filter(b => b.toolchestId !== id);
   if (state.selectedToolchestId === id) state.selectedToolchestId = null;
   saveState();
   renderAll();
+  showSuccessCard({
+    title: `Removed ${removed.name}`,
+    summary: 'The toolchest and its blueprint entries were removed.',
+    undo: {
+      restore: () => {
+        state.toolchests.splice(Math.min(idx, state.toolchests.length), 0, removed);
+        state.blueprint.push(...removedBp);
+        saveState(); renderAll();
+      }
+    },
+    duration: 8000
+  });
 }
 
 function createSnapshot(id) {
@@ -524,19 +715,28 @@ function addModuleToBlueprint(toolchestId, moduleName) {
   }
   state.blueprint.push({ toolchestId, module: moduleName });
   saveState();
-  renderComposition();
+  renderAll();
 }
 
 function removeFromBlueprint(index) {
   state.blueprint.splice(index, 1);
   saveState();
-  renderComposition();
+  renderAll();
 }
 
 function clearBlueprint() {
+  const prev = state.blueprint.slice();
   state.blueprint = [];
   saveState();
   renderComposition();
+  if (prev.length) {
+    showSuccessCard({
+      title: 'Blueprint cleared',
+      summary: `${prev.length} module(s) removed.`,
+      undo: { restore: () => { state.blueprint = prev; saveState(); renderComposition(); } },
+      duration: 7000
+    });
+  }
 }
 
 function exportBlueprint() {
@@ -599,7 +799,7 @@ Generated by dabasemint on ${new Date().toISOString()}
   toast('Blueprint + CONNECTION.md exported');
 }
 
-// RECOMMENDATIONS.md: "Export as Real Project" - scaffolds usable folder structure
+// Export as Real Project - scaffolds usable folder structure
 async function exportAsRealProject() {
   if (!state.blueprint.length) return toast('Blueprint is empty - add modules first');
 
@@ -672,12 +872,25 @@ Scaffolded by dabasemint — ${new Date().toISOString()}
     }, i * 120);
   });
 
-  toast(`Real project scaffold for ${destName} generated (files downloaded as folder simulation). See downloads.`);
+  recordExport(destName, modulesInfo.length, Object.keys(files).length);
 
-  // In Tauri this would use invoke write + mkdir + reveal
-  if (window.__TAURI__ && window.__TAURI__.invoke) {
-    toast('Native Tauri write + reveal would be called here (extend with new command).');
-  }
+  showSuccessCard({
+    title: `Exported “${destName}”`,
+    summary: `${modulesInfo.length} modules → ${Object.keys(files).length} files downloaded. Next: copy lib/ into your src/, review CONNECTION.md, npm install.`,
+    links: [
+      { id: 'open', label: '📂 Open exported folder', onClick: () => openExportedFolder() },
+      { id: 'copy', label: '📋 Copy next prompt', onClick: () => copyNextPrompt(destName) }
+    ],
+    duration: 0 // persists until dismissed
+  });
+}
+
+function copyNextPrompt(name) {
+  const prompt = `I scaffolded a project “${name}” from dabasemint with these modules:\n${state.blueprint.map(b => '- ' + b.module).join('\n')}\n\nHelp me wire them together, resolve import paths, and add any missing glue code.`;
+  try {
+    navigator.clipboard.writeText(prompt);
+    toast('Next prompt copied to clipboard');
+  } catch { toast('Clipboard blocked — see console'); console.log(prompt); }
 }
 
 // ==================== RENDERING ====================
@@ -686,9 +899,16 @@ function renderAll() {
   renderSelectedAnatomy();
   renderComposition();
   renderAgentStatus();
+  renderAgentActionsPanel();
+  renderExportsPanel();
+  renderStartHere();
+  renderTabCounts();
+  renderNextSteps();
+  renderSavedSearchesDropdown();
   updateMetrics();
   renderCollections();
   renderHealthDashboard();
+  applyGlossaryTooltips();
 }
 
 function renderCollections() {
@@ -720,6 +940,192 @@ function filterByTag(tag) {
   const s = $('search-input');
   if (s) s.value = tag;
   renderLibrary();
+}
+
+// ==================== START HERE / TAB COUNTS / PROVIDERS ====================
+function renderStartHere() {
+  const el = $('start-here');
+  if (!el) return;
+  const show = !state.startHereDismissed && state.toolchests.length === 0;
+  el.style.display = show ? 'block' : 'none';
+  applyGlossaryTooltips(el);
+}
+
+function dismissStartHere() {
+  state.startHereDismissed = true;
+  saveState();
+  renderStartHere();
+  toast('Start-here panel hidden. Find Tour in the top bar anytime.');
+}
+
+function renderTabCounts() {
+  const bp = $('tab-count-blueprint');
+  if (bp) bp.textContent = state.blueprint.length;
+}
+
+function renderProvidersPanel() {
+  const el = $('providers-panel');
+  if (!el) return;
+  const s = state.agentProviderStatus || {};
+  const providers = (s.providers && s.providers.length) ? s.providers : [{ id: 'novita', name: 'Novita', configured: !!s.configured }];
+  const rows = providers.map(p => `<div class="health-card">
+    <div><strong>${p.name}</strong> ${p.configured ? '<span class="status-badge connected">configured</span>' : '<span class="status-badge missing">no key</span>'}</div>
+    <div class="muted" style="font-size:11px;margin-top:4px">id: ${p.id} • ${p.model || '—'}</div>
+  </div>`).join('');
+  el.innerHTML = `<div class="section-header"><h2>Provider Status</h2></div>
+    <div class="health-cards">${rows}</div>
+    <p class="muted" style="font-size:12px;margin-top:14px">Edit <code>config/agent.local.json</code> to add provider keys. Then run <code>npm run serve</code>.</p>`;
+}
+
+function renderSnapshotsPanel() {
+  const el = $('snapshots-panel');
+  if (!el) return;
+  const snaps = state.toolchests.filter(t => t.snapshotOf);
+  if (!snaps.length) {
+    renderEmptyState(el, {
+      icon: '📸', title: 'No snapshots yet',
+      body: 'Snapshots are versioned captures of a toolchest at a point in time. Create one from a toolchest card (Snapshot action) to track drift over time.',
+      actions: [{ id: 'go', label: 'Go to Library', onClick: () => setActiveTab('library') }]
+    });
+    return;
+  }
+  el.innerHTML = `<div class="health-cards">${snaps.map(s => `<div class="health-card"><strong>${s.name}</strong> <span class="muted" style="font-size:11px">${new Date(s.addedAt).toLocaleString()}</span></div>`).join('')}</div>`;
+}
+
+// ==================== AGENT ACTIONS PANEL ====================
+function renderAgentActionsPanel() {
+  const el = $('agent-actions-panel');
+  if (!el) return;
+  const hasTc = !!state.selectedToolchestId || state.toolchests.length > 0;
+  const tcId = state.selectedToolchestId || (state.toolchests[0] && state.toolchests[0].id);
+  const actions = [
+    { id: 'assay',       icon: '🧪', title: 'Analyze toolchest',     desc: 'Run an assay on the selected toolchest', disabled: !tcId },
+    { id: 'recommend',   icon: '⭐', title: 'Recommend modules',     desc: 'Suggest high-reuse modules to add',       disabled: !state.toolchests.length },
+    { id: 'explain',     icon: '📖', title: 'Explain this module',   desc: 'Deep-dive a selected module',             disabled: !tcId },
+    { id: 'missing',     icon: '🧩', title: 'Find missing pieces',   desc: 'Gaps in your current blueprint',          disabled: !state.blueprint.length },
+    { id: 'docs',        icon: '📝', title: 'Generate project docs', desc: 'Context pack for the blueprint',          disabled: !state.blueprint.length },
+    { id: 'audit',       icon: '🔍', title: 'Audit blueprint',       desc: 'Composition advisor run',                 disabled: !state.blueprint.length }
+  ];
+  const grid = actions.map(a => `<button class="agent-action-btn" data-aa="${a.id}" ${a.disabled ? 'disabled' : ''}>
+    <span class="aa-icon">${a.icon}</span>
+    <span class="aa-title">${a.title}</span>
+    <span class="aa-desc">${a.desc}</span>
+  </button>`).join('');
+  const meta = state.lastAgentMeta;
+  const metaHtml = meta ? `<div class="agent-meta-strip">
+    <span><strong>Last run:</strong> ${meta.id}</span>
+    <span><strong>When:</strong> ${new Date(meta.ts).toLocaleTimeString()}</span>
+    ${meta.confidence != null ? `<span><strong>Confidence:</strong> ${meta.confidence}</span>` : ''}
+    ${meta.costMs != null ? `<span><strong>Time:</strong> ${meta.costMs}ms</span>` : ''}
+    <span><strong>Provider:</strong> ${meta.provider || '—'}</span>
+  </div>` : '';
+  el.innerHTML = `<div class="agent-action-grid">${grid}</div>${metaHtml}
+    <div class="agent-raw"><details><summary>Show raw result</summary><pre id="agent-raw-pre">${meta ? 'select an action to see output' : 'no runs yet'}</pre></details></div>`;
+  el.querySelectorAll('[data-aa]').forEach(b => {
+    b.onclick = () => handleAgentAction(b.dataset.aa, tcId);
+  });
+}
+
+async function handleAgentAction(id, tcId) {
+  const raw = $('agent-raw-pre');
+  if (id === 'assay' && tcId) { await runAssay(tcId); }
+  else if (id === 'recommend') {
+    const tc = state.toolchests.find(t => t.id === tcId) || state.toolchests[0];
+    if (tc) { await runTouchpoint('find-complements', { primaryModules: tc.modules.slice(0, 3), availableToolchests: state.toolchests.map(t => t.name) }); }
+  }
+  else if (id === 'explain' && tcId) {
+    const tc = state.toolchests.find(t => t.id === tcId);
+    if (tc) { await runTouchpoint('assay-toolchest', { toolchestName: tc.name, modules: tc.modules.slice(0, 4), readmeExcerpt: tc.readme }); }
+  }
+  else if (id === 'missing') { await runCompositionAdvisor(); }
+  else if (id === 'docs')    { await generateContextPack(); }
+  else if (id === 'audit')   { await runCompositionAdvisor(); }
+  if (raw) raw.textContent = JSON.stringify(state.lastAgentResults, null, 2).slice(0, 4000);
+}
+
+// ==================== EXPORTS PANEL ====================
+function renderExportsPanel() {
+  const el = $('exports-panel');
+  if (!el) return;
+  const hist = state.exportHistory || [];
+  const blueprintReady = state.blueprint.length > 0;
+  const header = `<div style="padding:16px">
+    <button class="primary-btn" data-export="preview" ${blueprintReady ? '' : 'disabled'}>📦 Preview & export project</button>
+    ${!blueprintReady ? '<p class="muted" style="font-size:12px;margin-top:8px">Add modules to your blueprint first.</p>' : ''}
+  </div>`;
+  const histHtml = hist.length ? `<div style="padding:0 16px 16px"><h4 style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Recent exports</h4>
+    ${hist.map(h => `<div class="export-history-item"><div class="eh-top"><strong>${h.name}</strong><span class="muted" style="font-size:11px">${new Date(h.ts).toLocaleString()}</span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${h.moduleCount} modules • ${h.files} files</div></div>`).join('')}
+  </div>` : '';
+  el.innerHTML = header + histHtml;
+  el.querySelector('[data-export="preview"]')?.addEventListener('click', () => startExportPreview());
+}
+
+// ==================== NEXT-STEPS SUGGESTIONS ====================
+function nextSteps() {
+  const steps = [];
+  if (state.toolchests.length === 0) {
+    steps.push({ label: '+ Register a /forge folder', onClick: () => $('addToolchestBtn')?.click() });
+    steps.push({ label: 'Load demo library', onClick: () => loadReferenceToolchests() });
+    return steps;
+  }
+  if (state.blueprint.length === 0) {
+    steps.push({ label: '🧪 Run assay on first toolchest', onClick: () => { setActiveTab('anatomy'); const id = state.toolchests[0].id; selectToolchest(id); runAssay(id); } });
+    steps.push({ label: '🔬 Inspect anatomy', onClick: () => setActiveTab('anatomy') });
+    steps.push({ label: '➕ Add core modules to blueprint', onClick: () => { state.toolchests.forEach(t => { const core = t.modules.find(m => /core|shared/i.test(m.name)); if (core) addModuleToBlueprint(t.id, core.name); }); } });
+    return steps;
+  }
+  if (state.exportHistory.length === 0) {
+    steps.push({ label: '🧠 Run composition advisor', onClick: () => { setActiveTab('blueprint'); runCompositionAdvisor(); } });
+    steps.push({ label: '📝 Generate context pack', onClick: () => generateContextPack() });
+    steps.push({ label: '📦 Export as real project', onClick: () => startExportPreview() });
+    return steps;
+  }
+  steps.push({ label: '🧱 Mint this blueprint', onClick: () => mintBlueprint() });
+  steps.push({ label: '📦 Preview another export', onClick: () => startExportPreview() });
+  steps.push({ label: '🛣 Trade routes', onClick: () => runTradeRoutes() });
+  return steps;
+}
+
+function renderNextSteps() {
+  const steps = nextSteps();
+  const targetTab = state.activeTab || 'library';
+  const el = $('next-steps-' + targetTab);
+  // also handle advanced-* tabs gracefully (no panel -> skip)
+  if (!el) return;
+  if (!steps.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="next-steps"><h4>What to do next</h4><div class="ns-list">${steps.map((s, i) => `<button class="ghost-btn tiny" data-ns="${i}">${s.label}</button>`).join('')}</div></div>`;
+  el.querySelectorAll('[data-ns]').forEach(b => {
+    b.onclick = () => { try { steps[+b.dataset.ns].onClick(); } catch (e) { console.warn(e); } };
+  });
+}
+
+// ==================== SAVED SEARCHES DROPDOWN ====================
+function renderSavedSearchesDropdown() {
+  const sel = $('saved-searches');
+  if (!sel) return;
+  const opts = state.savedSearches.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
+  sel.innerHTML = `<option value=\"\">Saved searches…</option>${opts}`;
+  sel.onchange = () => {
+    const idx = +sel.value;
+    const s = state.savedSearches[idx];
+    if (!s) return;
+    state.searchTerm = s.query || '';
+    state.filterType = s.filters?.type || 'all';
+    state.filterRole = s.filters?.role || 'all';
+    state.filterContractsOnly = !!s.filters?.contractsOnly;
+    state.filterHealthMin = s.filters?.healthMin || 0;
+    syncFilterInputs();
+    renderLibrary();
+  };
+}
+
+function syncFilterInputs() {
+  const s = $('search-input'); if (s) s.value = state.searchTerm || '';
+  const f = $('filter-type'); if (f) f.value = state.filterType;
+  const r = $('filter-role'); if (r) r.value = state.filterRole;
+  const c = $('filter-contracts'); if (c) c.checked = state.filterContractsOnly;
+  const h = $('filter-health'); if (h) h.value = state.filterHealthMin || '';
 }
 
 function clearTagFilter() {
@@ -787,31 +1193,118 @@ function updateMetrics() {
   const b = $('metricBlueprints'); if (b) b.textContent = state.blueprint.length;
 }
 
+// ==================== ROLE / NL SEARCH HELPERS ====================
+// Synonym map: natural-language intent -> module role/type token.
+const ROLE_SYNONYMS = {
+  auth: ['auth', 'login', 'sso', 'workos', 'session', 'oauth', 'credential'],
+  ui: ['ui', 'react', 'component', 'radix', 'panel', 'frontend', 'view', 'primitive'],
+  core: ['core', 'engine', 'loop', 'controller', 'agent', 'orchestrator'],
+  media: ['media', 'video', 'audio', 'upload', 'player', 'mux', 'image'],
+  analytics: ['analytics', 'tracking', 'statsig', 'segment', 'metric'],
+  contracts: ['contracts', 'schema', 'zod', 'interface', 'shared'],
+  integration: ['integration', 'mcp', 'extension', 'webhook', 'sdk']
+};
+
+function matchRoleFromQuery(q) {
+  for (const [role, syns] of Object.entries(ROLE_SYNONYMS)) {
+    if (syns.some(s => q.includes(s))) return role;
+  }
+  return null;
+}
+
+function matchModuleRole(m, role) {
+  const t = ((m.type || '') + ' ' + (m.role || '') + ' ' + (m.name || '')).toLowerCase();
+  const syns = ROLE_SYNONYMS[role] || [role];
+  return syns.some(s => t.includes(s));
+}
+
+// Reusability score 0-100 for a single module (heuristic, deterministic).
+function moduleReusability(m, tc) {
+  let score = 50;
+  const loc = typeof m.loc === 'number' ? m.loc : parseInt(m.loc, 10) || 0;
+  if (loc > 0 && loc < 600) score += 20;       // small = portable
+  else if (loc > 3000) score -= 15;             // huge = hard
+  if (m.hasContracts || (tc && tc.contracts && /shared|contract/i.test(m.name))) score += 18;
+  if (m.hasReadme) score += 8;
+  if (/shared|core|primitive|util/i.test(m.name)) score += 10;
+  if (/website|marketing|landing/i.test(m.name)) score -= 12;
+  return Math.max(5, Math.min(99, Math.round(score)));
+}
+
+// “Best for” tag derived from role/type.
+function moduleBestFor(m) {
+  for (const [role, syns] of Object.entries(ROLE_SYNONYMS)) {
+    if (matchModuleRole(m, role)) return role;
+  }
+  return 'general';
+}
+
+// Hard-to-transplant warning.
+function moduleTransplantWarning(m, tc) {
+  const loc = typeof m.loc === 'number' ? m.loc : parseInt(m.loc, 10) || 0;
+  const warns = [];
+  if (loc > 2500) warns.push('large surface area');
+  if (!(m.hasContracts || (tc && tc.contracts && /shared|contract/i.test(m.name)))) warns.push('no contracts');
+  if (/extension|native|website/i.test(m.name)) warns.push('tightly coupled to host');
+  return warns;
+}
+
 function renderLibrary() {
   const container = $('library-grid');
   if (!container) return;
 
   let filtered = state.toolchests;
 
+  // Natural-language-ish + multi-field search
   if (state.searchTerm) {
-    const q = state.searchTerm.toLowerCase();
+    const q = state.searchTerm.toLowerCase().trim();
+    const roleHit = matchRoleFromQuery(q); // may narrow by role
     filtered = filtered.filter(tc =>
       tc.name.toLowerCase().includes(q) ||
-      tc.modules.some(m => m.name.toLowerCase().includes(q))
+      (tc.readme || '').toLowerCase().includes(q) ||
+      (tc.tags || []).some(t => t.toLowerCase().includes(q)) ||
+      tc.modules.some(m =>
+        m.name.toLowerCase().includes(q) ||
+        (m.role || '').toLowerCase().includes(q) ||
+        (roleHit ? matchModuleRole(m, roleHit) : false)
+      )
     );
   }
   if (state.filterType !== 'all') {
     filtered = filtered.filter(tc => tc.sourceType === state.filterType);
   }
+  if (state.filterRole !== 'all') {
+    filtered = filtered.filter(tc => tc.modules.some(m => matchModuleRole(m, state.filterRole)));
+  }
+  if (state.filterContractsOnly) {
+    filtered = filtered.filter(tc => tc.contracts === true);
+  }
+  if (state.filterHealthMin > 0) {
+    filtered = filtered.filter(tc => computeHealth(tc) >= state.filterHealthMin);
+  }
 
   if (!filtered.length) {
-    container.innerHTML = `<div class="empty-card">No matches. <button class="tiny" onclick="clearFilters()">Clear filters</button></div>`;
+    renderEmptyState(container, {
+      icon: state.toolchests.length === 0 ? '🗃️' : '🔍',
+      title: state.toolchests.length === 0 ? 'No toolchests yet' : 'No matches',
+      body: state.toolchests.length === 0
+        ? 'Register a /forge output folder to begin, or load the demo library to explore.'
+        : 'Try clearing some filters or searching for something broader (e.g. “ui modules”).',
+      actions: state.toolchests.length === 0
+        ? [
+            { id: 'demo', label: 'Load demo library', primary: true, onClick: () => loadReferenceToolchests() },
+            { id: 'reg', label: '+ Register a /forge folder', onClick: () => $('addToolchestBtn')?.click() },
+            { id: 'wiz', label: '✨ Guided workflow', onClick: () => startWizard() }
+          ]
+        : [{ id: 'clear', label: 'Clear filters', primary: true, onClick: () => clearFilters() }]
+    });
     return;
   }
 
   container.innerHTML = filtered.map(tc => {
     const health = computeHealth(tc);
     const richness = getRichnessLabel(health);
+    const fstat = state.fileStatus[tc.id] || 'connected';
     return `
       <div class="toolchest-card ${state.selectedToolchestId === tc.id ? 'selected' : ''}" data-id="${tc.id}">
         <div class="card-header">
@@ -819,6 +1312,7 @@ function renderLibrary() {
             <strong>${tc.name}</strong>
             <span class="badge source-${tc.sourceType}">${tc.sourceType}</span>
             ${tc.contracts ? '<span class="badge" style="background:#39f6af22;color:#39f6af;border:none">contracts</span>' : ''}
+            <span class="status-badge ${fstat}" title="Local file status">${fstat}</span>
           </div>
           <div class="health">
             <span class="health-score ${richness.color}">${health}</span>
@@ -914,15 +1408,39 @@ function renderSelectedAnatomy() {
   const panel = $('anatomy-panel');
   if (!panel) return;
 
+  // Sync the anatomy picker dropdown
+  const picker = $('anatomy-picker');
+  if (picker) {
+    picker.innerHTML = '<option value="">Select a toolchest…</option>' +
+      state.toolchests.map(t => `<option value="${t.id}" ${t.id === state.selectedToolchestId ? 'selected' : ''}>${t.name}</option>`).join('');
+    picker.onchange = () => { selectToolchest(picker.value); };
+  }
+
   const tc = state.toolchests.find(t => t.id === state.selectedToolchestId);
   if (!tc) {
-    panel.innerHTML = `<div class="empty">Select a toolchest from the library.</div>`;
+    renderEmptyState(panel, {
+      icon: '🔬',
+      title: 'No toolchest selected',
+      body: state.toolchests.length
+        ? 'Pick a toolchest above (or from the Library) to explore its modules.'
+        : 'Register a toolchest first, then return here to inspect its anatomy.',
+      actions: state.toolchests.length
+        ? []
+        : [
+            { id: 'demo', label: 'Load demo library', primary: true, onClick: () => loadReferenceToolchests() },
+            { id: 'lib', label: 'Go to Library', onClick: () => setActiveTab('library') }
+          ]
+    });
     return;
   }
 
   const health = computeHealth(tc);
-  const modHtml = tc.modules.map(m => `
+  const fstat = state.fileStatus[tc.id] || 'connected';
+  const modHtml = tc.modules.map(m => {
+    const inCompare = state.compareQueue.some(q => q.toolchestId === tc.id && q.module === m.name);
+    return `
     <div class="module-row">
+      <input type="checkbox" class="compare-cb" data-cb-tc="${tc.id}" data-cb-mod="${m.name}" ${inCompare ? 'checked' : ''} title="Add to compare" />
       <strong>${m.name}</strong>
       <span class="muted">${m.role}</span>
       <span>${m.loc}</span>
@@ -933,7 +1451,8 @@ function renderSelectedAnatomy() {
         <button class="tiny" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', JSON.stringify({toolchestId:'${tc.id}', module:'${m.name}'}))">Drag</button>
         <button class="tiny" onclick="showModuleModal('${tc.id}', '${m.name}')">Details</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   const graphSvg = renderSimpleGraph(tc);
 
@@ -943,14 +1462,16 @@ function renderSelectedAnatomy() {
         <h3>${tc.name}</h3>
         <span class="badge source-${tc.sourceType}">${tc.sourceType}</span>
         <span class="health-score">${health}</span>
+        <span class="status-badge ${fstat}">${fstat}</span>
       </div>
       <div>
         <button class="small-btn" onclick="runAssay('${tc.id}')">Run Assay</button>
         <button class="small-btn" onclick="runComplements('${tc.id}')">Find Complements</button>
+        <button class="small-btn" onclick="refreshToolchest('${tc.id}')">↻ Refresh</button>
       </div>
     </div>
     <div class="modules-section">
-      <h4>Modules</h4>
+      <h4>Modules <span class="muted" style="font-weight:400">(tick boxes to compare)</span></h4>
       ${modHtml}
     </div>
     <div class="graph-section">
@@ -962,6 +1483,10 @@ function renderSelectedAnatomy() {
       <pre>${tc.readme}</pre>
     </div>
   `;
+  panel.querySelectorAll('.compare-cb').forEach(cb => {
+    cb.onchange = () => toggleCompare(cb.dataset.cbTc, cb.dataset.cbMod);
+  });
+  applyGlossaryTooltips(panel);
 }
 
 function renderSimpleGraph(tc) {
@@ -1069,7 +1594,7 @@ window.showHelp = () => {
         <li>Curation, Snapshots, Drift, Registry IO</li>
       </ul>
       <p>Use + Register to load your /forge toolchests. Everything is local.</p>
-      <p>See STRATEGIC-PLAN.md for details.</p>
+      <p>See docs/CURRENT-STATE.md for current operating details. Historical planning docs are archived in docs/archive/.</p>
       <div class="modal-actions">
         <button class="ghost-btn" onclick="closeHelp()">Got it</button>
       </div>
@@ -1454,7 +1979,15 @@ Run "Composition Advisor" or export for full CONNECTION.md guidance.
   const area = $('advisor-results') || $('trade-routes-results');
   if (area) area.innerHTML = `<pre>${output}</pre>`;
 
-  toast('Blueprint minted as new entry in your library!');
+  showSuccessCard({
+    title: 'Blueprint minted ✨',
+    summary: `Saved “${minted.name}” as a reusable library item (${modulesInfo.length} modules). Find it in your Library with the “minted” badge.`,
+    links: [
+      { id: 'lib', label: '📚 Open Library', onClick: () => setActiveTab('library') },
+      { id: 'assay', label: '🧪 Assay the mint', onClick: () => runAssay(mintedName) }
+    ],
+    duration: 7000
+  });
 }
 
 async function generateContextPack() {
@@ -1534,13 +2067,35 @@ function setupFilters() {
       renderLibrary();
     };
   }
-
-  // Add dynamic tag filter if tags exist
-  const allTags = new Set();
-  state.toolchests.forEach(tc => (tc.tags || []).forEach(t => allTags.add(t)));
-  if (allTags.size > 0 && filter) {
-    // Could expand filter here in future; for now tags show in cards
+  const role = $('filter-role');
+  if (role) {
+    role.onchange = () => { state.filterRole = role.value; renderLibrary(); };
   }
+  const contracts = $('filter-contracts');
+  if (contracts) {
+    contracts.onchange = () => { state.filterContractsOnly = contracts.checked; renderLibrary(); };
+  }
+  const health = $('filter-health');
+  if (health) {
+    health.oninput = () => { state.filterHealthMin = parseInt(health.value, 10) || 0; renderLibrary(); };
+  }
+  const saveBtn = $('save-search-btn');
+  if (saveBtn) {
+    saveBtn.onclick = saveCurrentSearch;
+  }
+}
+
+function saveCurrentSearch() {
+  const name = prompt('Name this search:', state.searchTerm || 'my search');
+  if (!name) return;
+  state.savedSearches.push({
+    name,
+    query: state.searchTerm,
+    filters: { type: state.filterType, role: state.filterRole, contractsOnly: state.filterContractsOnly, healthMin: state.filterHealthMin }
+  });
+  saveState();
+  renderSavedSearchesDropdown();
+  toast(`Saved search “${name}”`);
 }
 
 function clearFilters() {
@@ -1552,6 +2107,330 @@ function clearFilters() {
 }
 
 // ==================== INIT ====================
+// ==================== ONBOARDING TOUR (point 1) ====================
+const TOUR_STEPS = [
+  {
+    title: 'Welcome to dabasemint 👋',
+    body: `<p>dabasemint helps you compose new projects from <dfn data-term="toolchest">toolchests</dfn> — folders of reusable modules extracted by <code>/forge</code>.</p>
+         <p>This 30-second tour shows you the whole workflow.</p>`
+  },
+  {
+    title: '1 · Register a toolchest',
+    body: `<p>Click <strong>+ Register</strong> in the top bar to load a <code>/forge</code> output folder. Or hit <strong>“Load demo library”</strong> to explore three sample toolchests.</p>`
+  },
+  {
+    title: '2 · Inspect modules (Anatomy)',
+    body: `<p>Open the <strong>🔬 Anatomy</strong> tab to see every module, its role, contracts, and reusability.</p>`
+  },
+  {
+    title: '3 · Add modules to your blueprint',
+    body: `<p>Click <strong>+ Blueprint</strong> on any module, or drag it. Your selection lives in the <strong>🧱 Blueprint</strong> tab.</p>`
+  },
+  {
+    title: '4 · Export a real project',
+    body: `<p>Preview the generated folder tree, then <strong>Generate project</strong>. Want a guided version? Use <strong>“Create a project from toolchests”</strong> anytime.</p>`
+  },
+  {
+    title: 'Glossary',
+    body: `<dl class="tour-glossary">
+      <dt>Toolchest</dt><dd>${TERMS.toolchest}</dd>
+      <dt>Blueprint</dt><dd>${TERMS.blueprint}</dd>
+      <dt>Mint</dt><dd>${TERMS.mint}</dd>
+      <dt>Assay</dt><dd>${TERMS.assay}</dd>
+      <dt>Trade Routes</dt><dd>${TERMS.trade}</dd>
+    </dl>`
+  }
+];
+
+function startOnboarding(force = false) {
+  if (!force && state.onboardingSeen) return;
+  let step = 0;
+  const host = $('modal-host');
+  if (!host) return;
+  host.innerHTML = '';
+  const overlay = document.createElement('div');
+  overlay.className = 'tour-overlay';
+  overlay.innerHTML = `<div class="tour-card"><div class="tour-progress"></div><div class="tour-content"></div><div class="tour-actions"></div></div>`;
+  host.appendChild(overlay);
+  const render = () => {
+    const s = TOUR_STEPS[step];
+    overlay.querySelector('.tour-progress').innerHTML = TOUR_STEPS.map((_, i) =>
+      `<span class="${i < step ? 'done' : i === step ? 'active' : ''}"></span>`).join('');
+    overlay.querySelector('.tour-content').innerHTML = `<h2>${s.title}</h2>${s.body}`;
+    applyGlossaryTooltips(overlay);
+    overlay.querySelector('.tour-actions').innerHTML = `
+      <button class="ghost-btn tiny" id="tour-skip">Skip tour</button>
+      <span class="muted" style="font-size:11px">${step + 1} / ${TOUR_STEPS.length}</span>
+      <button class="primary-btn" id="tour-next">${step === TOUR_STEPS.length - 1 ? 'Finish' : 'Next →'}</button>
+    `;
+    overlay.querySelector('#tour-skip').onclick = finishTour;
+    overlay.querySelector('#tour-next').onclick = () => {
+      if (step < TOUR_STEPS.length - 1) { step++; render(); }
+      else finishTour();
+    };
+  };
+  const finishTour = () => {
+    state.onboardingSeen = true;
+    saveState();
+    closeModalHost();
+    toast('Tour complete — explore anytime via the Tour button.');
+  };
+  render();
+}
+
+// ==================== MAIN WORKFLOW WIZARD (points 1 + 4) ====================
+function startWizard() {
+  state.wizardStep = 0;
+  const wiz = { picked: new Set(state.toolchests.map(t => t.id)) };
+  const steps = [
+    { title: 'Pick toolchests', render: renderWizardPick },
+    { title: 'Choose modules', render: renderWizardModules },
+    { title: 'Review conflicts', render: renderWizardConflicts },
+    { title: 'Generate docs', render: renderWizardDocs },
+    { title: 'Export project', render: renderWizardExport }
+  ];
+  let step = 0;
+  const go = () => {
+    if (step < 0) return;
+    if (step >= steps.length) { closeModalHost(); return; }
+    const { modal, body } = openModal({
+      title: 'Create a project from toolchests',
+      bodyHtml: `<div class="wizard-steps">${steps.map((s, i) => `<div class="wizard-step-dot ${i < step ? 'done' : i === step ? 'active' : ''}">${i + 1}. ${s.title}</div>`).join('')}</div><div id="wizard-body"></div>`,
+      actions: [
+        { label: 'Cancel', onClick: ({ close }) => close() },
+        { label: '← Back', onClick: () => { step = Math.max(0, step - 1); go(); } },
+        { label: step === steps.length - 1 ? 'Finish' : 'Next →', primary: true, onClick: () => { step++; go(); } }
+      ]
+    });
+    steps[step].render(body, wiz, () => go());
+  };
+  go();
+}
+
+function renderWizardPick(host, wiz) {
+  const body = host.querySelector('#wizard-body') || host;
+  if (!state.toolchests.length) {
+    body.innerHTML = `<p class="muted">No toolchests yet. <button class="ghost-btn tiny" onclick="dabasemint.loadReferenceToolchests()">Load demo library</button> or <button class="ghost-btn tiny" id="wiz-reg">register one</button>.</p>`;
+    body.querySelector('#wiz-reg')?.addEventListener('click', () => { closeModalHost(); $('addToolchestBtn')?.click(); });
+    return;
+  }
+  body.innerHTML = `<p class="muted">Select the toolchests you want to draw modules from:</p>
+    <ul class="wizard-checklist">${state.toolchests.map(t => `<li><input type="checkbox" data-wiz-tc="${t.id}" ${wiz.picked.has(t.id) ? 'checked' : ''} /><label>${t.name} <span class="muted">(${t.modules.length} modules)</span></label></li>`).join('')}</ul>`;
+  body.querySelectorAll('[data-wiz-tc]').forEach(cb => {
+    cb.onchange = () => { cb.checked ? wiz.picked.add(cb.dataset.wizTc) : wiz.picked.delete(cb.dataset.wizTc); };
+  });
+}
+
+function renderWizardModules(host, wiz) {
+  const body = host.querySelector('#wizard-body') || host;
+  const tcs = state.toolchests.filter(t => wiz.picked.has(t.id));
+  if (!tcs.length) { body.innerHTML = '<p class="muted">Go back and pick at least one toolchest.</p>'; return; }
+  const inBp = new Set(state.blueprint.map(b => b.toolchestId + '/' + b.module));
+  const rows = tcs.flatMap(tc => tc.modules.map(m => {
+    const key = tc.id + '/' + m.name;
+    return `<li><input type="checkbox" data-wiz-mod="${tc.id}|${m.name}" ${inBp.has(key) ? 'checked' : ''} /><label><strong>${m.name}</strong> <span class="muted">— ${tc.name} — ${m.role}</span></label></li>`;
+  })).join('');
+  body.innerHTML = `<p class="muted">Choose modules to add to your blueprint:</p><ul class="wizard-checklist">${rows}</ul>`;
+  body.querySelectorAll('[data-wiz-mod]').forEach(cb => {
+    cb.onchange = () => {
+      const [tcId, mod] = cb.dataset.wizMod.split('|');
+      if (cb.checked) addModuleToBlueprint(tcId, mod);
+      else { const i = state.blueprint.findIndex(b => b.toolchestId === tcId && b.module === mod); if (i >= 0) removeFromBlueprint(i); }
+    };
+  });
+}
+
+function renderWizardConflicts(host) {
+  const body = host.querySelector('#wizard-body') || host;
+  const analysis = analyzeBlueprint();
+  body.innerHTML = `<p class="muted">A pre-export health check on your blueprint.</p>
+    <div class="preview-grid">
+      <div>${analysis.conflicts.length ? `<div class="preview-warn">⚠ ${analysis.conflicts.length} naming conflict(s):<ul>${analysis.conflicts.map(c => `<li>${c}</li>`).join('')}</ul></div>` : '<div class="preview-ok">✓ No naming conflicts</div>'}
+        ${analysis.missingReadmes.length ? `<div class="preview-warn">⚠ Missing README: ${analysis.missingReadmes.join(', ')}</div>` : '<div class="preview-ok">✓ All have READMEs</div>'}
+        ${analysis.missingContracts.length ? `<div class="preview-warn">⚠ Missing contracts: ${analysis.missingContracts.join(', ')}</div>` : '<div class="preview-ok">✓ Contracts present</div>'}
+      </div>
+      <div><strong>Selected (${state.blueprint.length}):</strong><ul>${state.blueprint.map(b => `<li>${b.module}</li>`).join('') || '<li class="muted">none</li>'}</ul></div>
+    </div>`;
+}
+
+function renderWizardDocs(host, wiz, next) {
+  const body = host.querySelector('#wizard-body') || host;
+  body.innerHTML = `<p class="muted">Generate a context pack your other AI agents can consume, then continue to export.</p>
+    <button class="primary-btn" id="wiz-docs-btn">📝 Generate context pack</button>
+    <div id="wiz-docs-out" style="margin-top:12px"></div>`;
+  body.querySelector('#wiz-docs-btn')?.addEventListener('click', async () => {
+    body.querySelector('#wiz-docs-out').innerHTML = '<em>Generating…</em>';
+    await generateContextPack();
+    body.querySelector('#wiz-docs-out').innerHTML = '<div class="preview-ok">✓ Context pack downloaded.</div>';
+  });
+}
+
+function renderWizardExport(host, wiz, next) {
+  const body = host.querySelector('#wizard-body') || host;
+  body.innerHTML = `<p class="muted">Ready to export. This opens the full preview.</p>
+    <button class="primary-btn" id="wiz-export-btn">📦 Open export preview</button>`;
+  body.querySelector('#wiz-export-btn')?.addEventListener('click', () => { closeModalHost(); startExportPreview(); });
+}
+
+// ==================== BLUEPRINT ANALYSIS (pure — shared by wizard + preview) ====================
+function analyzeBlueprint() {
+  const conflicts = [];
+  const missingReadmes = [];
+  const missingContracts = [];
+  const nameCount = {};
+  state.blueprint.forEach(b => { nameCount[b.module] = (nameCount[b.module] || 0) + 1; });
+  Object.entries(nameCount).forEach(([name, n]) => { if (n > 1) conflicts.push(`${name} (×${n} across toolchests)`); });
+  state.blueprint.forEach(b => {
+    const tc = state.toolchests.find(t => t.id === b.toolchestId);
+    const mod = tc?.modules?.find(m => m.name === b.module);
+    if (mod && !mod.hasReadme) missingReadmes.push(b.module);
+    if (mod && !mod.hasContracts && !(tc?.contracts && /shared|contract/i.test(b.module))) missingContracts.push(b.module);
+  });
+  const tree = buildExportTree(state.blueprint);
+  const files = ['README.md', 'CONNECTION.md', 'package.json', 'dabasemint.json', 'src/lib/README.txt'];
+  return { conflicts, missingReadmes, missingContracts, tree, files, moduleCount: state.blueprint.length };
+}
+
+function buildExportTree(blueprint) {
+  const lines = ['project-root/'];
+  const byTc = {};
+  blueprint.forEach(b => { (byTc[b.toolchestId] = byTc[b.toolchestId] || []).push(b.module); });
+  lines.push('├─ src/');
+  lines.push('│  └─ lib/');
+  Object.entries(byTc).forEach(([tcId, mods], i, arr) => {
+    const tc = state.toolchests.find(t => t.id === tcId);
+    const last = i === arr.length - 1;
+    lines.push(`│     ${last ? '└─' : '├─'} ${tc?.name || tcId}/`);
+    mods.forEach(m => lines.push(`│        └─ ${m}/`));
+  });
+  lines.push('├─ README.md');
+  lines.push('├─ CONNECTION.md');
+  lines.push('├─ package.json');
+  lines.push('└─ dabasemint.json');
+  return lines.join('\n');
+}
+
+// ==================== EXPORT PREVIEW (point 6) ====================
+function startExportPreview() {
+  if (!state.blueprint.length) return toast('Blueprint is empty - add modules first');
+  const a = analyzeBlueprint();
+  openModal({
+    title: '📦 Export preview', wide: true,
+    bodyHtml: `<div class="preview-grid">
+        <div>
+          <h4 style="margin:0 0 6px">Folder tree</h4>
+          <div class="preview-tree">${escapeHtml(a.tree)}</div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 6px">Files that will be generated</h4>
+          <ul style="font-size:12px;margin:0">${a.files.map(f => `<li><code>${f}</code></li>`).join('')}</ul>
+          <h4 style="margin:14px 0 6px">Selected modules (${a.moduleCount})</h4>
+          <ul style="font-size:12px;margin:0">${state.blueprint.map(b => `<li>${b.module}</li>`).join('') || '<li class="muted">none</li>'}</ul>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        ${a.conflicts.length ? `<div class="preview-warn">⚠ Naming conflicts: ${a.conflicts.join('; ')}</div>` : '<div class="preview-ok">✓ No naming conflicts</div>'}
+        ${a.missingContracts.length ? `<div class="preview-warn">⚠ Missing contracts: ${a.missingContracts.join(', ')}</div>` : '<div class="preview-ok">✓ Contracts present</div>'}
+        ${a.missingReadmes.length ? `<div class="preview-warn">⚠ Missing READMEs: ${a.missingReadmes.join(', ')}</div>` : ''}
+      </div>`,
+    actions: [
+      { label: 'Cancel', onClick: ({ close }) => close() },
+      { label: '✏ Edit blueprint', onClick: ({ close }) => { close(); setActiveTab('blueprint'); } },
+      { label: '🏗 Generate project', primary: true, onClick: ({ close }) => { close(); exportAsRealProject(); } }
+    ]
+  });
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+// ==================== COMPARE (point 7) ====================
+function toggleCompare(tcId, mod) {
+  const idx = state.compareQueue.findIndex(q => q.toolchestId === tcId && q.module === mod);
+  if (idx >= 0) state.compareQueue.splice(idx, 1);
+  else { if (state.compareQueue.length >= 4) state.compareQueue.shift(); state.compareQueue.push({ toolchestId: tcId, module: mod }); }
+  const cc = $('compare-count'); if (cc) cc.textContent = state.compareQueue.length;
+  const btn = $('open-compare-btn'); if (btn) btn.disabled = state.compareQueue.length < 2;
+  renderSelectedAnatomy();
+}
+function clearCompare() {
+  state.compareQueue = [];
+  const cc = $('compare-count'); if (cc) cc.textContent = '0';
+  const btn = $('open-compare-btn'); if (btn) btn.disabled = true;
+  renderSelectedAnatomy();
+}
+function openCompareModal() {
+  if (state.compareQueue.length < 2) return toast('Select at least 2 modules to compare');
+  const cols = state.compareQueue.map(q => {
+    const tc = state.toolchests.find(t => t.id === q.toolchestId);
+    const m = tc?.modules?.find(x => x.name === q.module) || { name: q.module };
+    return { tc, m };
+  });
+  const rows = [
+    ['Module', cols.map(c => escapeHtml(c.m.name))],
+    ['Toolchest', cols.map(c => escapeHtml(c.tc?.name || '?'))],
+    ['Role', cols.map(c => escapeHtml(c.m.role || '—'))],
+    ['LOC', cols.map(c => escapeHtml(String(c.m.loc ?? '—')))],
+    ['Type', cols.map(c => escapeHtml(c.m.type || '—'))],
+    ['Reusability', cols.map(c => `<span class="health-score ${moduleReusability(c.m, c.tc) >= 70 ? 'ok' : moduleReusability(c.m, c.tc) >= 50 ? 'cyan' : 'warn'}">${moduleReusability(c.m, c.tc)}</span>`)],
+    ['Best for', cols.map(c => `<span class="tag">${moduleBestFor(c.m)}</span>`)],
+    ['Contracts', cols.map(c => (c.m.hasContracts || (c.tc?.contracts && /shared|contract/i.test(c.m.name))) ? '<span class="ok-inline">✓</span>' : '<span class="warn-inline">✗</span>')],
+    ['README', cols.map(c => c.m.hasReadme ? '<span class="ok-inline">✓</span>' : '<span class="warn-inline">✗</span>')],
+    ['Hard to transplant', cols.map(c => { const w = moduleTransplantWarning(c.m, c.tc); return w.length ? `<span class="warn-inline">${w.join(', ')}</span>` : '<span class="ok-inline">none</span>'; })]
+  ];
+  const table = `<table class="compare-table"><thead><tr><th></th>${cols.map(c => `<th>${escapeHtml(c.m.name)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr><th>${r[0]}</th>${r[1].map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  openModal({ title: '⚖ Compare modules', wide: true, bodyHtml: table, actions: [{ label: 'Close', onClick: ({ close }) => close() }] });
+}
+
+// ==================== FILE-STATUS CHECKS (point 10) ====================
+async function refreshAllFileStatus() {
+  await Promise.all(state.toolchests.map(tc => checkToolchestHealth(tc.id)));
+  renderLibrary();
+  if (state.selectedToolchestId) renderSelectedAnatomy();
+}
+async function checkToolchestHealth(id) {
+  const tc = state.toolchests.find(t => t.id === id);
+  if (!tc) return;
+  const path = tc._nativePath || tc.path || '';
+  if (!path || tc.sourceType === 'minted') { state.fileStatus[id] = 'connected'; return; }
+  // Browser: can't stat FS directly; use _dirHandle if present, else mark connected (no signal).
+  if (tc._dirHandle) {
+    try {
+      // Attempt a cheap handle op to confirm reachability.
+      await tc._dirHandle.values().next();
+      state.fileStatus[id] = 'connected';
+    } catch (e) {
+      state.fileStatus[id] = e.name === 'NotAllowedError' ? 'permission' : 'missing';
+    }
+    return;
+  }
+  // Tauri: stat via invoke if available.
+  if (window.__TAURI__ && window.__TAURI__.invoke) {
+    try {
+      const res = await safeTauriCall(() => window.__TAURI__.invoke('stat_path', { path }), null, 'stat_path');
+      if (res == null) { state.fileStatus[id] = 'connected'; return; }
+      state.fileStatus[id] = res.exists ? (res.mtime && tc.lastSeenMtime && res.mtime > tc.lastSeenMtime ? 'changed' : 'connected') : 'missing';
+    } catch { state.fileStatus[id] = 'connected'; }
+    return;
+  }
+  state.fileStatus[id] = 'connected';
+}
+
+// ==================== EXPORT HISTORY + OPEN FOLDER (point 5) ====================
+function recordExport(name, moduleCount, fileCount) {
+  state.exportHistory.unshift({ name, moduleCount, files: fileCount, ts: Date.now() });
+  if (state.exportHistory.length > 12) state.exportHistory.pop();
+  saveState();
+}
+async function openExportedFolder() {
+  if (window.__TAURI__ && window.__TAURI__.invoke) {
+    await safeTauriCall(() => window.__TAURI__.invoke('open_downloads_dir'), null, 'open_downloads_dir');
+    toast('Opening downloads folder…');
+  } else {
+    toast('Exports download to your browser’s Downloads folder.');
+  }
+}
+
 function setupGlobalEvents() {
   document.addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement.tagName === 'BODY') {
@@ -1566,27 +2445,23 @@ function setupGlobalEvents() {
   });
 
   // Search + filter inputs always exist in index.html, so always wire them.
-  // (Previously setupFilters() was only called inside the "create if missing"
-  //  branch, which never ran — leaving search/filter unwired.)
   setupFilters();
 
-  // Add search + filter UI if missing
-  const libHeader = document.querySelector('#library-grid')?.parentElement;
-  if (libHeader && !document.getElementById('search-input')) {
-    const controls = document.createElement('div');
-    controls.className = 'lib-controls';
-    controls.innerHTML = `
-      <input id="search-input" placeholder="Search modules or names..." />
-      <select id="filter-type">
-        <option value="all">All types</option>
-        <option value="oss-repo">OSS Repo</option>
-        <option value="production-web">Production Web</option>
-        <option value="native-binary">Native Binary</option>
-      </select>
-    `;
-    libHeader.insertBefore(controls, libHeader.firstChild);
-    setupFilters();
-  }
+  // --- Tab bar ---
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+  });
+  // Hero secondary buttons that jump to a tab
+  document.querySelectorAll('[data-tab]').forEach(el => {
+    if (el.classList.contains('tab-btn')) return; // already wired
+    el.addEventListener('click', () => setActiveTab(el.dataset.tab));
+  });
+
+  // --- Wizard / tour / compare / addToolchestBtn2 ---
+  $('mainWizardBtn')?.addEventListener('click', () => startWizard());
+  $('onboardingBtn')?.addEventListener('click', () => startOnboarding(true));
+  $('addToolchestBtn2')?.addEventListener('click', () => $('addToolchestBtn')?.click());
+  $('open-compare-btn')?.addEventListener('click', () => openCompareModal());
 }
 
 async function init() {
@@ -1667,9 +2542,13 @@ async function init() {
   setupGlobalEvents();
   renderAll();
 
-  if (state.toolchests.length === 0) {
-    setTimeout(() => loadReferenceToolchests(), 700);
-  }
+  // File-status checks (point 10) — poll on focus + every 60s.
+  refreshAllFileStatus();
+  window.addEventListener('focus', refreshAllFileStatus);
+  setInterval(refreshAllFileStatus, 60000);
+
+  // First-run onboarding tour (point 1). Only if not seen.
+  setTimeout(() => startOnboarding(false), 500);
 
   console.log('%c[dabasemint] Enhanced & healthy. Ready.', 'color:#22c8ff');
 }
@@ -1727,6 +2606,23 @@ window.applyComplementsResult = applyComplementsResult;
 window.applyAdvisorSuggestions = applyAdvisorSuggestions;
 window.showModuleModal = showModuleModal;
 window.loadContractsPreview = loadContractsPreview;
+// === UX overhaul exports ===
+window.setActiveTab = setActiveTab;
+window.showAdvanced = showAdvanced;
+window.dismissStartHere = dismissStartHere;
+window.startOnboarding = startOnboarding;
+window.startWizard = startWizard;
+window.startExportPreview = startExportPreview;
+window.analyzeBlueprint = analyzeBlueprint;
+window.openCompareModal = openCompareModal;
+window.clearCompare = clearCompare;
+window.toggleCompare = toggleCompare;
+window.saveCurrentSearch = saveCurrentSearch;
+window.handleAgentAction = handleAgentAction;
+window.renderProvidersPanel = renderProvidersPanel;
+window.renderSnapshotsPanel = renderSnapshotsPanel;
+window.openExportedFolder = openExportedFolder;
+window.refreshToolchest = refreshToolchest;
 // Convenience aggregate (kept for window.dabasemint.exportBlueprint style calls).
 window.dabasemint = {
   state, runTouchpoint, loadReferenceToolchests, exportBlueprint, exportAsRealProject,
@@ -1734,7 +2630,12 @@ window.dabasemint = {
   runCompositionAdvisor, addModuleToBlueprint, removeFromBlueprint, moveBlueprintItem,
   reorderBlueprint, clearBlueprint, exportRegistry, importRegistry, compareLastTwo,
   toggleCommandPalette, showHelp, filterByTag, clearTagFilter, clearFilters,
-  applyAssayResult, applyComplementsResult, applyAdvisorSuggestions, showModuleModal, toast
+  applyAssayResult, applyComplementsResult, applyAdvisorSuggestions, showModuleModal, toast,
+  // UX additions
+  setActiveTab, showAdvanced, dismissStartHere, startOnboarding, startWizard,
+  startExportPreview, analyzeBlueprint, openCompareModal, clearCompare, toggleCompare,
+  saveCurrentSearch, handleAgentAction, renderProvidersPanel, renderSnapshotsPanel,
+  openExportedFolder, refreshToolchest
 };
 
 // Tauri integration hook

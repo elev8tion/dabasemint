@@ -88,7 +88,7 @@ server.listen(PORT, '127.0.0.1', () => {
     console.log(`AGENT_PROXY_PORT=${addr.port}`);
   }
 
-  // Write port file for reliable discovery (RECOMMENDATIONS.md)
+  // Write port file for reliable desktop/web UI discovery.
   try {
     const dir = path.join(os.homedir(), '.dabasemint');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

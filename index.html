@@ -22,16 +22,10 @@
         <div class="nav-actions">
           <div id="agent-status" class="agent-bar"></div>
           <div id="tauri-status" class="tauri-indicator" style="display:none; font-size:11px; background:#39f6af22; color:#39f6af; padding:2px 8px; border-radius:4px; margin-right:8px;">Native (Tauri)</div>
+          <button class="primary-btn" id="mainWizardBtn" title="Guided project creation">✨ Create a project from toolchests</button>
           <button class="ghost-btn" id="addToolchestBtn">+ Register</button>
           <button class="ghost-btn" onclick="toggleCommandPalette()" title="Command Palette (⌘K)">⌘K</button>
-          <button class="secondary-btn" id="loadReferencesBtn">Load References</button>
-          <button class="ghost-btn" id="load-pageagenttoolchest" title="Quick load page-agent-toolchest">PA</button>
-          <button class="ghost-btn" id="load-captionssitetoolchest" title="Quick load captions-site-toolchest">CS</button>
-          <button class="ghost-btn" id="load-glazetoolchest" title="Quick load Glaze-toolchest">GZ</button>
-          <button class="ghost-btn" onclick="exportRegistry()">Export Registry</button>
-          <button class="ghost-btn" onclick="importRegistry()">Import Registry</button>
-          <button class="ghost-btn" onclick="compareLastTwo()">Compare</button>
-            <button class="ghost-btn" onclick="runTradeRoutes()">Trade Routes</button>
+          <button class="ghost-btn" id="onboardingBtn" title="Replay the guided tour">Tour</button>
           <button class="ghost-btn" onclick="showHelp()">Help</button>
           <button class="ghost-btn" id="clearAllBtn">Reset</button>
         </div>
@@ -41,14 +35,15 @@
         <div class="hero-copy">
           <p class="eyebrow">Premium Toolchest Workshop — Plan Complete ✅ + Tauri</p>
           <h1>Visualize.<br>Compose.<br>Agent-Assay.</h1>
-          <p class="hero-subcopy">Local-first, high-fidelity interface for every /forge toolchest. Manual control + powerful agent augmentation.</p>
+          <p class="hero-subcopy">Local-first, high-fidelity interface for every /forge <dfn data-term="toolchest">toolchest</dfn>. Manual control + powerful agent augmentation.</p>
           <div class="hero-cta-row">
-            <button class="primary-btn" onclick="document.getElementById('library-grid').scrollIntoView({behavior:'smooth'})">Library</button>
-            <button class="secondary-btn" onclick="document.getElementById('composition-canvas').scrollIntoView({behavior:'smooth'})">Composition</button>
+            <button class="primary-btn" onclick="dabasemint.startWizard()">✨ Create a project</button>
+            <button class="secondary-btn" data-tab="blueprint">Go to Blueprint</button>
+            <button class="secondary-btn" data-tab="library">Browse Library</button>
           </div>
         </div>
         <div class="scanner-console">
-          <div class="console-topline"><span class="dot live"></span> <span>Ready</span></div>
+          <div class="console-topline"><span class="dot live"></span> <span id="status-text">Ready</span></div>
           <div class="console-metrics">
             <div><span id="metricToolchests">0</span><small>toolchests</small></div>
             <div><span id="metricModules">0</span><small>modules</small></div>
@@ -59,67 +54,166 @@
       </section>
     </header>
 
-    <!-- LIBRARY -->
-    <section class="section">
+    <!-- START HERE PANEL (first-run + dismissible) -->
+    <section id="start-here" class="section" style="display:none">
+      <div class="panel start-here-card">
+        <div class="start-here-head">
+          <h2>👋 Start here</h2>
+          <button class="ghost-btn tiny" onclick="dabasemint.dismissStartHere()">Dismiss</button>
+        </div>
+        <div class="start-here-body">
+          <div class="start-here-intro">
+            <p>Compose a new project from <dfn data-term="toolchest">toolchests</dfn> — folders of reusable modules extracted by <code>/forge</code>.</p>
+            <div class="start-here-actions">
+              <button class="primary-btn" onclick="dabasemint.loadReferenceToolchests()">Load demo library</button>
+              <button class="secondary-btn" id="addToolchestBtn2">+ Register a /forge output folder</button>
+              <button class="secondary-btn" onclick="dabasemint.startWizard()">Run the guided workflow</button>
+            </div>
+          </div>
+          <ol class="start-here-flow">
+            <li><strong>Register</strong> a toolchest</li>
+            <li><strong>Inspect</strong> its modules (Anatomy)</li>
+            <li><strong>Add</strong> modules to your blueprint</li>
+            <li><strong>Export</strong> a real project</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB BAR -->
+    <nav class="tab-bar panel" id="tab-bar">
+      <button class="tab-btn active" data-tab="library">📚 Library</button>
+      <button class="tab-btn" data-tab="anatomy">🔬 Anatomy</button>
+      <button class="tab-btn" data-tab="blueprint">🧱 Blueprint <span class="tab-count" id="tab-count-blueprint">0</span></button>
+      <button class="tab-btn" data-tab="agents">🤖 Agents</button>
+      <button class="tab-btn" data-tab="exports">📦 Exports</button>
+      <details class="tab-advanced">
+        <summary class="tab-btn ghost">⚙ Advanced</summary>
+        <div class="advanced-menu">
+          <button class="ghost-btn tiny" onclick="dabasemint.showAdvanced('snapshots')">Snapshots</button>
+          <button class="ghost-btn tiny" onclick="dabasemint.runTradeRoutes()">Trade Routes</button>
+          <button class="ghost-btn tiny" onclick="dabasemint.exportRegistry()">Export Registry</button>
+          <button class="ghost-btn tiny" onclick="dabasemint.importRegistry()">Import Registry</button>
+          <button class="ghost-btn tiny" onclick="dabasemint.compareLastTwo()">Compare</button>
+          <button class="ghost-btn tiny" onclick="dabasemint.showAdvanced('providers')">Provider Settings</button>
+        </div>
+      </details>
+    </nav>
+
+    <!-- TAB: LIBRARY -->
+    <section class="section tab-panel active" data-tab-panel="library">
       <div class="section-header">
-        <h2>Toolchest Library</h2>
-        <p>Health scores • Search • Source filters • One-click Assay & Composition</p>
+        <h2><dfn data-term="toolchest">Toolchest</dfn> Library</h2>
+        <p>Health scores • Search • Source filters • One-click <dfn data-term="assay">Assay</dfn> & Composition</p>
       </div>
       <div class="lib-controls">
-      <input id="search-input" placeholder="Search modules or toolchest names..." />
-      <select id="filter-type">
-        <option value="all">All Sources</option>
-        <option value="oss-repo">OSS Repo</option>
-        <option value="production-web">Production Web</option>
-        <option value="native-binary">Native Binary</option>
-      </select>
-    </div>
-    <div id="library-grid" class="library-grid"></div>
+        <input id="search-input" placeholder="Search modules, README text, contracts, tags… (e.g. “auth modules”)" />
+        <select id="filter-type">
+          <option value="all">All Sources</option>
+          <option value="oss-repo">OSS Repo</option>
+          <option value="production-web">Production Web</option>
+          <option value="native-binary">Native Binary</option>
+          <option value="minted">Minted</option>
+        </select>
+        <select id="filter-role">
+          <option value="all">All Roles</option>
+          <option value="auth">Auth</option>
+          <option value="ui">UI</option>
+          <option value="core">Core</option>
+          <option value="media">Media</option>
+          <option value="analytics">Analytics</option>
+          <option value="contracts">Contracts</option>
+          <option value="integration">Integration</option>
+        </select>
+        <label class="filter-chip"><input type="checkbox" id="filter-contracts" /> Contracts only</label>
+        <label class="filter-chip">Health ≥ <input type="number" id="filter-health" min="0" max="100" placeholder="0" style="width:54px" /></label>
+        <button class="ghost-btn tiny" id="save-search-btn">★ Save search</button>
+        <select id="saved-searches"><option value="">Saved searches…</option></select>
+        <button class="ghost-btn tiny" onclick="dabasemint.clearFilters()">Clear</button>
+      </div>
+      <div id="library-grid" class="library-grid"></div>
+      <div id="next-steps-library"></div>
     </section>
 
-    <!-- ANATOMY + AGENT -->
-    <section class="section two-col">
-      <div>
-        <h2>Anatomy</h2>
-        <div id="anatomy-panel" class="panel anatomy-panel">
-          <div class="empty">Select a toolchest to explore modules, run agents, and view details.</div>
-        </div>
-      </div>
-      <div>
-        <h2>Agent Results & History</h2>
-        <div class="panel">
-          <div id="global-agent-results" class="agent-results-area"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- COMPOSITION -->
-    <section class="section">
+    <!-- TAB: ANATOMY -->
+    <section class="section tab-panel" data-tab-panel="anatomy">
       <div class="section-header">
-        <h2>Composition Canvas</h2>
-        <p>Build blueprints across toolchests. Run the live Composition Advisor.</p>
+        <h2>Anatomy</h2>
+        <p>Inspect modules, compare them side-by-side, and add to your <dfn data-term="blueprint">blueprint</dfn>.</p>
+      </div>
+      <div class="lib-controls anatomy-meta-controls">
+        <select id="anatomy-picker"><option value="">Select a toolchest…</option></select>
+        <button class="ghost-btn tiny" id="open-compare-btn" disabled>Compare selected (<span id="compare-count">0</span>)</button>
+        <button class="ghost-btn tiny" onclick="dabasemint.clearCompare()">Clear compare</button>
+      </div>
+      <div id="anatomy-panel" class="panel anatomy-panel">
+        <div class="empty">Select a toolchest to explore modules, run agents, and view details.</div>
+      </div>
+      <div id="next-steps-anatomy"></div>
+    </section>
+
+    <!-- TAB: BLUEPRINT -->
+    <section class="section tab-panel" data-tab-panel="blueprint">
+      <div class="section-header">
+        <h2><dfn data-term="blueprint">Blueprint</dfn> Canvas</h2>
+        <p>Build blueprints across toolchests. Run the live Composition Advisor, then <dfn data-term="mint">Mint</dfn> or export.</p>
       </div>
       <div id="composition-canvas" class="composition-canvas panel"></div>
+      <div id="next-steps-blueprint"></div>
     </section>
 
-    <section class="section">
+    <!-- TAB: AGENTS -->
+    <section class="section tab-panel" data-tab-panel="agents">
       <div class="section-header">
-        <h2>Trade Routes (Cross-Toolchest Intelligence)</h2>
-        <p>Discover powerful combinations across your entire collection.</p>
+        <h2>Agent Actions</h2>
+        <p>Run AI touchpoints against your library and blueprint. Results appear with confidence, cost, and raw output.</p>
       </div>
+      <div id="agent-actions-panel" class="panel"></div>
+      <div class="section-header" style="margin-top:24px">
+        <h2>Agent Results & History</h2>
+      </div>
+      <div class="panel">
+        <div id="global-agent-results" class="agent-results-area"></div>
+      </div>
+      <div id="next-steps-agents"></div>
+    </section>
+
+    <!-- TAB: EXPORTS -->
+    <section class="section tab-panel" data-tab-panel="exports">
+      <div class="section-header">
+        <h2>Exports</h2>
+        <p>Preview and generate real projects from your blueprint. See recent exports.</p>
+      </div>
+      <div id="exports-panel" class="panel"></div>
+      <div id="next-steps-exports"></div>
+    </section>
+
+    <!-- ADVANCED PANELS (hidden by default) -->
+    <section class="section tab-panel" data-tab-panel="advanced-snapshots">
+      <div class="section-header"><h2>Snapshots</h2><p>Versioned snapshots of your toolchests.</p></div>
+      <div id="snapshots-panel" class="panel"></div>
+    </section>
+    <section class="section tab-panel" data-tab-panel="advanced-trade">
+      <div class="section-header"><h2>Trade Routes (Cross-Toolchest Intelligence)</h2><p>Discover powerful combinations across your entire collection.</p></div>
       <div id="trade-routes" class="panel" style="padding:20px;min-height:120px">
-        <button class="primary-btn" onclick="runTradeRoutes()">Analyze Trade Routes</button>
+        <button class="primary-btn" onclick="dabasemint.runTradeRoutes()">Analyze Trade Routes</button>
         <div id="trade-routes-results"></div>
       </div>
+    </section>
+    <section class="section tab-panel" data-tab-panel="advanced-providers">
+      <div class="section-header"><h2>Provider Settings</h2><p>Agent provider status + configuration.</p></div>
+      <div id="providers-panel" class="panel"></div>
     </section>
 
     <footer class="footer">
       <div><strong>dabasemint</strong> — Strategic Plan Complete + Tauri Wrapper</div>
-      <div><a href="STRATEGIC-PLAN.md" target="_blank">Plan</a> • Local only • <span onclick="window.dabasemint?.exportBlueprint?.()">Export current blueprint</span></div>
+      <div><a href="docs/CURRENT-STATE.md" target="_blank">Current state</a> • Local only • <span onclick="window.dabasemint?.exportBlueprint?.()">Export current blueprint</span></div>
     </footer>
   </main>
 
   <div id="toast" class="toast"></div>
+  <!-- Modal host (reusable) -->
+  <div id="modal-host"></div>
 
   <script type="module" src="/src/main.js"></script>
 </body>
