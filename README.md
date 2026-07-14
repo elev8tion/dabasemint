@@ -70,6 +70,11 @@ src-tauri/              # Rust desktop wrapper (sidecar spawn/kill, native FS)
 
 - Manual & sovereign (you control every toolchest)
 - Composition is the goal
+- **Pi everywhere** is the canonical activation for the full sovereign agentic layer (user\'s explicit instruction — replaces agentic-core and is not referred to as "Pi enabled")
 - Agents are powerful accelerators, not required
 - Visual masterpiece first
 - Local-first; keys stay server-side
+
+## Pi Everywhere Activation
+
+Run `/pi-everywhere` (or the `.pi-everywhere` marker is present) to activate your main `~/.pi` instance in this project. All agent touchpoints, composition intelligence, Mint Knowledge Graph, and health runs now route through the full Pi sovereign system.

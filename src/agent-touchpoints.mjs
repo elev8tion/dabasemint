@@ -1,16 +1,12 @@
 /**
  * dabasemint Agent Touchpoints
  *
- * Structured, validated, phase-aware agent tasks.
- * These are higher-leverage than kre8nz equivalents because
- * they operate on rich, structured toolchest data (modules, contracts, READMEs, .forge-state).
+ * NOW ROUTED THROUGH "Pi everywhere" (user's explicit request — not "Pi enabled", and replaces agentic-core).
+ * The 8 touchpoints are being migrated from raw prompt+JSON to real Pi subagents, chains,
+ * graphify KG, and multi-agent orchestration (Phase 2 of the evolution plan).
  *
- * Categories:
- * - Assay (on registration / refresh)
- * - Discovery (cross-toolchest)
- * - Composition (the killer feature)
- * - Context (export quality packs)
- * - Curation (long-term library health)
+ * Current touchpoints delegate via runWithPiEverywhere() in agent-provider.mjs.
+ * Categories remain for UI compatibility.
  */
 
 export const DABASEMINT_TOUCHPOINTS = [

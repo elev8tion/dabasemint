@@ -1,0 +1,68 @@
+{
+  "nodes": {
+    "sample-page-agent": {
+      "type": "toolchest",
+      "id": "sample-page-agent",
+      "name": "Sample Page Agent Toolchest",
+      "quality": "high",
+      "richnessScore": 87,
+      "modules": [
+        "utils",
+        "canvas-renderer",
+        "blueprint-adapter"
+      ],
+      "contracts": true,
+      "timestamp": "2026-07-12T19:22:48.293Z",
+      "overallQuality": "high"
+    },
+    "mint-1783884168293": {
+      "type": "mint",
+      "id": "mint-1783884168293",
+      "blueprintId": "blueprint-1",
+      "qualityScore": 92,
+      "lessons": [
+        "Added adaptive layout suggestions",
+        "Improved contract compatibility"
+      ],
+      "complementsUsed": [
+        "sample-page-agent",
+        "glaze-ui"
+      ],
+      "timestamp": "2026-07-12T19:22:48.293Z"
+    }
+  },
+  "edges": [
+    {
+      "from": "blueprint-1",
+      "to": "mint-1783884168293",
+      "type": "improved-by",
+      "strength": 0.92,
+      "note": "Added adaptive layout suggestions"
+    },
+    {
+      "from": "blueprint-1",
+      "to": "mint-1783884168293",
+      "type": "improved-by",
+      "strength": 0.92,
+      "note": "Improved contract compatibility"
+    },
+    {
+      "from": "blueprint-1",
+      "to": "sample-page-agent",
+      "type": "composed-with",
+      "strength": 0.8
+    },
+    {
+      "from": "blueprint-1",
+      "to": "glaze-ui",
+      "type": "composed-with",
+      "strength": 0.8
+    }
+  ],
+  "metadata": {
+    "lastUpdated": "2026-07-12T19:22:48.293Z",
+    "toolchestCount": 1,
+    "mintCount": 1,
+    "version": "1.0"
+  }
+}

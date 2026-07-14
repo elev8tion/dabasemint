@@ -1,0 +1,7 @@
+This project is using the main ~/.pi instance via "Pi everywhere" ONLY.
+
+User\'s explicit instruction: Use "Pi everywhere" (not "Pi enabled", not agentic-core). /pi-everywhere is the canonical activation method for the full sovereign Pi agentic layer in dabasemint.
+All agentic work (touchpoints, composition, KG, health runs) must route through Pi everywhere.
+Do not create a local .pi/ copy.
+All skills, models, memory, and agentic-core come from the global ~/.pi.
+Last activated: 2026-07-12

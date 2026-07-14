@@ -7,7 +7,7 @@ This document captures all opportunities that polish and enhance the core vision
 > A local-first, dark-neon visual masterpiece for /forge toolchests.  
 > Sovereign ingestion → deep understanding → powerful composition → agent-augmented workflows → native desktop experience via Tauri + sidecars.
 
-Everything stays on the user's machine. Toolchests are never copied or uploaded. Agents are accelerators, not the core.
+Everything stays on the user's machine. Toolchests are never copied or uploaded. **Pi everywhere** is the canonical and only approved activation for the full sovereign agentic layer (per user\'s explicit instruction — not "Pi enabled", replaces agentic-core).
 
 ---
 
